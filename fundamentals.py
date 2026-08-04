@@ -4,6 +4,8 @@ from typing import Optional
 
 import requests
 
+import db
+
 _HOSTS = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]
 _CACHE_TTL = 6 * 3600  # bilanço 6 saatte bir tazelenir (gün içi değişmez)
 
@@ -102,7 +104,7 @@ def get_fundamentals(symbol: str, force: bool = False) -> Optional[dict]:
 
     data = _quote_summary(clean)
     if not data:
-        return None
+        return db.get_stored_fundamentals(clean)
 
     fd = data.get("financialData") or {}
     ks = data.get("defaultKeyStatistics") or {}
@@ -170,6 +172,7 @@ def get_fundamentals(symbol: str, force: bool = False) -> Optional[dict]:
 
     with _cache_lock:
         _cache[clean] = (now, result)
+    db.store_fundamentals(clean, result)
     return result
 
 

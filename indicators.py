@@ -149,7 +149,7 @@ def support_resistance(closes: list[float], highs: list[float], lows: list[float
     support = [s for s in sup if s < price]
 
     return {
-        "resistance": sorted(resistance)[:4][::-1] if resistance else [],
+        "resistance": sorted(resistance)[:4] if resistance else [],
         "support": sorted(support, reverse=True)[:4] if support else [],
         "nearest_resistance": min(resistance) if resistance else None,
         "nearest_support": max(support) if support else None,

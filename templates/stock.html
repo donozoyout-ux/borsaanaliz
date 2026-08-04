@@ -63,6 +63,23 @@ a{color:var(--mut);text-decoration:none}
 .empty{padding:14px 0;color:#5a5f6b;font-size:13px;text-align:center}
 .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}
 .trend-line{display:flex;align-items:center;gap:8px;font-size:14px}
+.fc-summary{font-size:14px;line-height:1.7;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px}
+.fc-cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:700px){.fc-cols{grid-template-columns:1fr}}
+.fc-col{background:rgba(255,255,255,.02);border-radius:10px;padding:10px 12px}
+.fc-col h4{font-size:12px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;color:var(--mut)}
+.fc-target{display:flex;justify-content:space-between;font-size:14px;padding:5px 0;border-bottom:1px dashed rgba(255,255,255,.04)}
+.fc-target:last-child{border-bottom:none}
+.fc-target .lbl{color:var(--mut);font-size:12.5px}
+.fc-target .pct{font-size:12px;margin-left:8px}
+.fc-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;font-size:13px}
+.fc-meta .m{border:1px solid var(--line);border-radius:8px;padding:6px 10px;color:var(--mut)}
+.score-bar{height:6px;border-radius:4px;background:#20242d;margin:8px 0 12px;overflow:hidden}
+.score-bar .fill{height:100%;border-radius:4px;transition:width .5s}
+.fc-break{font-size:12.5px;margin-top:8px}
+.fc-break .row{display:flex;align-items:center;gap:8px;padding:3px 0;color:var(--mut)}
+.fc-break .row .pts{font-weight:700;min-width:24px;text-align:right}
+.arch-note{font-size:11px;color:#5a5f6b;margin-top:6px}
 </style>
 </head>
 <body>
@@ -86,6 +103,11 @@ a{color:var(--mut);text-decoration:none}
 
   <div class="trend-line" id="trendLine">Trend: <span class="badge neutral" id="trendBadge">hesaplanıyor</span></div>
   <div style="height:12px"></div>
+
+  <div class="panel forecast-panel">
+    <h3>🎯 Yön & Hedefler <span class="badge neutral" id="stanceBadge">hesaplanıyor</span></h3>
+    <div id="forecast"><div class="empty">Yükleniyor...</div></div>
+  </div>
 
   <div class="grid" id="cards"></div>
 
@@ -119,6 +141,8 @@ a{color:var(--mut);text-decoration:none}
     <h3>İzleme Kayıtları</h3>
     <div class="logs" id="logs"><div class="empty">Kayıt yok.</div></div>
   </div>
+
+  <div style="text-align:center;font-size:12px;color:#5a5f6b;padding:8px 0 20px" id="dbStats"></div>
 </div>
 
 <script>
@@ -229,8 +253,71 @@ function render(data) {
   document.getElementById('indSummary').innerHTML = lines.map(l=>`<div class="level-row" style="border-bottom:none">${l}</div>`).join('');
 
   renderTelegram(data);
+  renderForecast(data);
   renderFund(data);
   renderNews(data);
+  renderDbStats(data);
+}
+
+function stanceClass(st) {
+  return st === 'GÜÇLÜ ALIM' || st === 'ALIM' ? 'up' : (st === 'GÜÇLÜ SATIM' || st === 'SATIM' ? 'down' : 'neutral');
+}
+
+function renderForecast(data) {
+  const f = (data.snapshot && data.snapshot.forecast);
+  const el = document.getElementById('forecast');
+  const badge = document.getElementById('stanceBadge');
+  if (!f) {
+    badge.textContent = 'yok'; badge.className = 'badge neutral';
+    el.innerHTML = '<div class="empty">Yön analizi hesaplanamadı.</div>';
+    return;
+  }
+  badge.textContent = f.stance;
+  badge.className = 'badge ' + stanceClass(f.stance);
+
+  const scorePct = ((f.score + 10) / 20 * 100).toFixed(0);
+  const scoreColor = f.score >= 0 ? 'var(--up)' : 'var(--down)';
+  const bull = (f.bull || []).map(t =>
+    `<div class="fc-target"><span class="lbl">${t.label}</span><span class="up">${fmt(t.price)} TL <span class="pct">%${t.pct>0?'+':''}${fmt(t.pct)}</span></span></div>`
+  ).join('') || '<div class="fc-target"><span class="lbl">—</span></div>';
+  const bear = (f.bear || []).map(t =>
+    `<div class="fc-target"><span class="lbl">${t.label}</span><span class="down">${fmt(t.price)} TL <span class="pct">%${t.pct>0?'+':''}${fmt(t.pct)}</span></span></div>`
+  ).join('') || '<div class="fc-target"><span class="lbl">—</span></div>';
+
+  const breakRows = (f.breakdown || []).map(b =>
+    `<div class="row"><span class="pts ${b.dir==='bull'?'up':b.dir==='bear'?'down':''}">${b.points>0?'+':''}${b.points}</span><span>${b.label}</span></div>`
+  ).join('');
+
+  let meta = [];
+  if (f.expected_1d) meta.push(`Bugün: ${fmt(f.expected_1d.low)} - ${fmt(f.expected_1d.high)} TL`);
+  if (f.expected_1w) meta.push(`1 hafta: ${fmt(f.expected_1w.low)} - ${fmt(f.expected_1w.high)} TL`);
+  if (f.stop) meta.push(`🛑 Stop: ${fmt(f.stop)} TL`);
+  if (f.swing_high) meta.push(`Swing: ${fmt(f.swing_low)} - ${fmt(f.swing_high)} TL`);
+
+  el.innerHTML = `
+    <div class="fc-summary">${f.summary || ''}</div>
+    <div class="fc-cols">
+      <div class="fc-col">
+        <h4>🔼 Yukarı hedefler</h4>
+        ${bull}
+        <h4 style="margin-top:10px">🔽 Aşağı riskler</h4>
+        ${bear}
+      </div>
+      <div class="fc-col">
+        <h4>Teknik skor: ${f.score > 0 ? '+' : ''}${f.score} / 10</h4>
+        <div class="score-bar"><div class="fill" style="width:${scorePct}%;background:${scoreColor}"></div></div>
+        <div class="fc-break">${breakRows}</div>
+      </div>
+    </div>
+    <div class="fc-meta">${meta.map(m=>`<span class="m">${m}</span>`).join('')}</div>`;
+}
+
+function renderDbStats(data) {
+  const db = data.db || {};
+  const el = document.getElementById('dbStats');
+  if (!el) return;
+  if (!Object.keys(db).length) return;
+  el.textContent = `Saklanan veri: ${(db.price_bars||0).toLocaleString('tr-TR')} fiyat barı · ${(db.news||0)} haber · ${(db.snapshots||0)} analiz anlık görüntüsü`;
 }
 
 function renderTelegram(data) {
@@ -259,8 +346,7 @@ function renderFund(data) {
     targetRow = `<div class="level-row"><span>Hedef Fiyat (analist)</span><span class="${cls}">${fmt(f.target_price)} TL (${up > 0 ? '+' : ''}${fmt(up)}%)</span></div>`;
   }
   const rows = [
-    ['Piyasa Değeri', trBig(f.market_cap)],
-    ['F/K (P/E)', f.pe !== null ? fmt(f.pe) : '--'],
+    ['Piyasa Değeri', trBig(f.market_cap)],    ['F/K (P/E)', f.pe !== null ? fmt(f.pe) : '--'],
     ['İleri F/K', f.forward_pe !== null ? fmt(f.forward_pe) : '--'],
     ['PD/DD (P/B)', f.pb !== null ? fmt(f.pb) : '--'],
     ['FD/FAVÖK (EV/EBITDA)', f.ev_ebitda !== null ? fmt(f.ev_ebitda) : '--'],
@@ -281,13 +367,17 @@ function renderFund(data) {
   el.innerHTML = rows.map(r =>
     `<div class="level-row"><span>${r[0]}</span><span>${r[1]}</span></div>`
   ).join('') + targetRow;
+  if (f.stored_at) {
+    const d = new Date(f.stored_at * 1000).toLocaleString('tr-TR',{dateStyle:'short',timeStyle:'short'});
+    el.innerHTML += `<div class="arch-note">⚠️ Canlı veri alınamadı — arşivden gösteriliyor (${d})</div>`;
+  }
 }
 
 function renderNews(data) {
   const news = (data.snapshot && data.snapshot.news) || [];
   const el = document.getElementById('news');
   if (!news.length) {
-    el.innerHTML = '<div class="empty">Bu hisse için son 2 günde haber bulunamadı.</div>';
+    el.innerHTML = '<div class="empty">Bu hisse için son 90 günde haber bulunamadı.</div>';
     return;
   }
   el.innerHTML = news.map(n => `
@@ -301,6 +391,9 @@ function renderNews(data) {
       <div class="tm">${n.time ? new Date(n.time * 1000).toLocaleString('tr-TR',{dateStyle:'short',timeStyle:'short'}) : ''}</div>
     </div>
   `).join('');
+  if (news.some(n => n.stored)) {
+    el.innerHTML += '<div class="arch-note">⚠️ Canlı haber alınamadı — arşivden gösteriliyor.</div>';
+  }
 }
 
 async function renderSignals() {
@@ -359,7 +452,16 @@ document.getElementById('stopBtn').onclick = async () => {
   b.textContent = '○ DURDU'; b.className = 'badge neutral';
   location.reload();
 };
-document.getElementById('refreshNow').onclick = refresh;
+document.getElementById('refreshNow').onclick = async () => {
+  const btn = document.getElementById('refreshNow');
+  btn.disabled = true; btn.textContent = 'Yenileniyor...';
+  try {
+    const r = await j('/api/stock/' + SYMBOL + '/refresh', {method:'POST'});
+    if (r.ok) render({snapshot: r.snapshot, tracking: true, telegram: {configured:false}});
+  } catch(e) {}
+  btn.disabled = false; btn.textContent = 'Şimdi Yenile';
+  refresh();
+};
 document.getElementById('tgTest').onclick = async () => {
   const btn = document.getElementById('tgTest');
   btn.disabled = true; btn.textContent = 'Gönderiliyor...';

@@ -8,8 +8,10 @@ from urllib.parse import quote
 
 import requests
 
+import db
+
 _CACHE_TTL = 10 * 60
-_MAX_AGE = 30 * 24 * 3600  # 30 günden eski haberleri gösterme
+_MAX_AGE = 90 * 24 * 3600  # 90 günden eski haberleri canlı akışta gösterme
 _GOOGLE_MIN_GAP = 5  # Google'a iki istek arası minimum saniye (burst koruması)
 _cache: dict[str, tuple[float, list[dict]]] = {}
 _cache_lock = threading.Lock()
@@ -151,9 +153,23 @@ def get_news(symbol: str, limit: int = 8, force: bool = False) -> list[dict]:
         deduped = fresh if fresh else []
 
     result = deduped[:limit]
+    if result:
+        db.store_news(clean, result)
+    else:
+        stored = db.get_stored_news(clean, limit=limit, min_age=int(now - _MAX_AGE))
+        if stored:
+            result = stored
+            result = [dict(n) for n in result]
+            for n in result:
+                n.setdefault("stored", True)
     with _cache_lock:
         _cache[clean] = (now, result)
     return result
+
+
+def clear_cache() -> None:
+    with _cache_lock:
+        _cache.clear()
 
 
 def format_news_message(symbol: str, news_items: list[dict]) -> str:

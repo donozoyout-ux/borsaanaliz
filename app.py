@@ -3,6 +3,7 @@ import os
 
 from flask import Flask, jsonify, render_template, request
 
+import db
 import tracker
 from bist_data import get_quote, normalize_symbol, search_symbols
 
@@ -55,6 +56,11 @@ def api_stock(symbol):
     snapshot = tracker.get_snapshot(clean)
     tracking = tracker.is_tracking(clean)
     if not snapshot:
+        try:
+            snapshot = tracker.collect_snapshot(clean)
+        except Exception:
+            snapshot = None
+    if not snapshot:
         quote = get_quote(clean)
         if quote:
             snapshot = {
@@ -71,7 +77,40 @@ def api_stock(symbol):
         "tracking": tracking,
         "snapshot": snapshot,
         "telegram": tracker.telegram_status(),
+        "db": db_stats(),
     })
+
+
+@app.route("/api/stock/<symbol>/refresh", methods=["POST"])
+def api_refresh(symbol):
+    clean = normalize_symbol(symbol)
+    try:
+        from fundamentals import clear_cache
+        clear_cache()
+    except Exception:
+        pass
+    try:
+        from news import clear_cache as clear_news_cache
+        clear_news_cache()
+    except Exception:
+        pass
+    snapshot = tracker.collect_snapshot(clean)
+    if snapshot:
+        tracker.set_snapshot_now(clean, snapshot)
+        return jsonify({"ok": True, "snapshot": snapshot})
+    return jsonify({"ok": False, "error": "Veri alınamadı"}), 502
+
+
+@app.route("/api/db/stats")
+def api_db_stats():
+    return jsonify(db.stats())
+
+
+def db_stats() -> dict:
+    try:
+        return db.stats()
+    except Exception:
+        return {}
 
 
 @app.route("/api/stock/<symbol>/start", methods=["POST"])

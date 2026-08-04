@@ -5,7 +5,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import db
 from bist_data import get_history, get_intraday, get_quote, market_label, normalize_symbol
+from forecast import build_forecast, format_forecast_message
 from fundamentals import get_fundamentals
 from indicators import build_snapshot, evaluate_signals
 from news import format_news_message, get_news
@@ -66,15 +68,17 @@ def _save_state() -> None:
 
 
 def get_signals(symbol: str = None) -> list[dict]:
-    data = _load_json(SIGNALS_FILE, {"signals": []})
-    sigs = data.get("signals", [])
     if symbol:
         clean = normalize_symbol(symbol)
-        sigs = [s for s in sigs if s.get("symbol") == clean]
-    return sigs
+        return db.get_stored_signals(clean)
+    all_sigs: list[dict] = []
+    for sym in tracked_symbols():
+        all_sigs += db.get_stored_signals(sym)
+    return all_sigs
 
 
 def _add_signal(sig: dict) -> None:
+    db.store_signal(sig)
     data = _load_json(SIGNALS_FILE, {"signals": []})
     sigs = data.setdefault("signals", [])
     sigs.append(sig)
@@ -108,6 +112,12 @@ def _set_snapshot(symbol: str, snap: dict) -> None:
     snaps = data.setdefault("snapshots", {})
     snaps[normalize_symbol(symbol)] = snap
     _save_json(SNAPSHOT_FILE, data)
+
+
+def set_snapshot_now(symbol: str, snapshot: dict) -> None:
+    clean = normalize_symbol(symbol)
+    _set_snapshot(clean, snapshot)
+    db.store_snapshot(clean, snapshot)
 
 
 def tracked_symbols() -> list[str]:
@@ -161,6 +171,39 @@ def _save_symbol_state(symbol: str, state: dict) -> None:
     _save_state()
 
 
+def collect_snapshot(symbol: str) -> dict | None:
+    """Anlık tam snapshot üretir (signal göndermez, DB yazmaz). Sayfa açılışında kullanılır."""
+    quote = get_quote(symbol)
+    if not quote:
+        return None
+
+    history = get_history(symbol, "6mo", "1d")
+    if len(history) < 30:
+        history = get_history(symbol, "3mo", "1d")
+    if len(history) < 15:
+        return None
+
+    intraday = get_intraday(symbol)
+    closes = [b["c"] for b in history]
+    highs = [b["h"] for b in history]
+    lows = [b["l"] for b in history]
+    volumes = [b["v"] for b in history]
+
+    symbol_state = _load_symbol_state(symbol)
+    ind, _signals = evaluate_signals(symbol, quote, closes, highs, lows, volumes, intraday, symbol_state)
+
+    fundamentals = get_fundamentals(symbol)
+    news_items = get_news(symbol)
+    forecast = build_forecast(symbol, quote, ind, history, fundamentals)
+
+    snapshot = build_snapshot(symbol, quote, ind, intraday, trend=_derive_trend(ind, quote["price"]))
+    snapshot["market_label"] = market_label()
+    snapshot["fundamentals"] = fundamentals
+    snapshot["news"] = news_items
+    snapshot["forecast"] = forecast
+    return snapshot
+
+
 def _cycle(symbol: str) -> None:
     if not is_tracking(symbol):
         return
@@ -181,6 +224,10 @@ def _cycle(symbol: str) -> None:
         if not intraday:
             _add_log(f"{symbol}: gün içi veri alınamadı.")
 
+        db.store_bars(symbol, "1d", history)
+        if intraday:
+            db.store_bars(symbol, "1m", intraday)
+
         closes = [b["c"] for b in history]
         highs = [b["h"] for b in history]
         lows = [b["l"] for b in history]
@@ -191,11 +238,19 @@ def _cycle(symbol: str) -> None:
         symbol_state["last_cycle"] = _now_str()
         _save_symbol_state(symbol, symbol_state)
 
+        fundamentals = get_fundamentals(symbol)
+        news_items = get_news(symbol)
+        forecast = build_forecast(symbol, quote, ind, history, fundamentals)
+
         snapshot = build_snapshot(symbol, quote, ind, intraday, trend=_derive_trend(ind, quote["price"]))
         snapshot["market_label"] = market_label()
-        snapshot["fundamentals"] = get_fundamentals(symbol)
-        snapshot["news"] = get_news(symbol)
+        snapshot["fundamentals"] = fundamentals
+        snapshot["news"] = news_items
+        snapshot["forecast"] = forecast
         _set_snapshot(symbol, snapshot)
+        db.store_snapshot(symbol, snapshot)
+
+        _handle_stance_change(symbol, quote, forecast, symbol_state)
 
         for sig in signals:
             msg = format_signal_message(symbol, quote.get("name", ""), quote["price"], sig, market_label())
@@ -218,6 +273,32 @@ def _cycle(symbol: str) -> None:
     except Exception as exc:
         logger.exception("İzleme hatası %s: %s", symbol, exc)
         _add_log(f"{symbol}: hata -> {exc}")
+
+
+def _handle_stance_change(symbol: str, quote: dict, forecast: dict, symbol_state: dict) -> None:
+    new_stance = forecast.get("stance", "NÖTR")
+    prev_stance = symbol_state.get("prev_stance")
+    if prev_stance == new_stance:
+        return
+    symbol_state["prev_stance"] = new_stance
+    _save_symbol_state(symbol, symbol_state)
+    if prev_stance is None:
+        return
+    msg = format_forecast_message(symbol, forecast)
+    sent = send_telegram_message(msg)
+    _add_signal({
+        "symbol": symbol,
+        "title": f"GÖRÜNÜM: {prev_stance} → {new_stance}",
+        "emoji": "🎯",
+        "direction": forecast.get("stance"),
+        "detail": f"Teknik skor {forecast['score']:+d}. " + "; ".join(
+            f"{t['label']} {t['price']} (%{t['pct']:+})" for t in (forecast.get("bull") or [])[:2]
+        ),
+        "price": quote["price"],
+        "sent_telegram": sent,
+        "time": _now_str(),
+    })
+    _add_log(f"{symbol}: GÖRÜNÜM DEĞİŞTİ -> {prev_stance} → {new_stance}")
 
 
 def _process_important_news(symbol: str, quote: dict) -> None:
@@ -299,6 +380,7 @@ def _ensure_worker() -> None:
 
 
 def init() -> None:
+    db.init()
     _load_state()
     _ensure_worker()
 
