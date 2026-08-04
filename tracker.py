@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from bist_data import get_history, get_intraday, get_quote, market_label, normalize_symbol
+from fundamentals import get_fundamentals
 from indicators import build_snapshot, evaluate_signals
 from telegram_notifier import format_signal_message, is_configured, send_telegram_message
 
@@ -191,6 +192,7 @@ def _cycle(symbol: str) -> None:
 
         snapshot = build_snapshot(symbol, quote, ind, intraday, trend=_derive_trend(ind, quote["price"]))
         snapshot["market_label"] = market_label()
+        snapshot["fundamentals"] = get_fundamentals(symbol)
         _set_snapshot(symbol, snapshot)
 
         for sig in signals:

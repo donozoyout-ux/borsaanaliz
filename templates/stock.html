@@ -101,6 +101,11 @@ a{color:var(--mut);text-decoration:none}
   </div>
 
   <div class="panel">
+    <h3>Temel Analiz / Bilanço Özeti</h3>
+    <div id="fund"><div class="empty">Yükleniyor...</div></div>
+  </div>
+
+  <div class="panel">
     <h3>Önemli Sinyaller</h3>
     <div id="signals"><div class="empty">Henüz sinyal yok. Bu hisse sürekli izleniyor...</div></div>
   </div>
@@ -123,6 +128,16 @@ async function j(url, opts) {
 function fmt(n, d=2) {
   if (n === null || n === undefined || isNaN(n)) return '--';
   return Number(n).toLocaleString('tr-TR', {minimumFractionDigits: d, maximumFractionDigits: d});
+}
+
+function trBig(n) {
+  if (n === null || n === undefined || isNaN(n)) return '--';
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return (n/1e12).toLocaleString('tr-TR',{maximumFractionDigits:2}) + ' trn';
+  if (abs >= 1e9) return (n/1e9).toLocaleString('tr-TR',{maximumFractionDigits:2}) + ' milyar';
+  if (abs >= 1e6) return (n/1e6).toLocaleString('tr-TR',{maximumFractionDigits:2}) + ' milyon';
+  if (abs >= 1e3) return (n/1e3).toLocaleString('tr-TR',{maximumFractionDigits:2}) + ' bin';
+  return fmt(n,2);
 }
 
 function priceColor(n) { return n > 0 ? 'up' : (n < 0 ? 'down' : ''); }
@@ -209,6 +224,7 @@ function render(data) {
   document.getElementById('indSummary').innerHTML = lines.map(l=>`<div class="level-row" style="border-bottom:none">${l}</div>`).join('');
 
   renderTelegram(data);
+  renderFund(data);
 }
 
 function renderTelegram(data) {
@@ -220,6 +236,45 @@ function renderTelegram(data) {
   } else {
     el.className = 'telegram no'; sp.textContent = 'ayarlanmadı';
   }
+}
+
+function renderFund(data) {
+  const f = (data.snapshot && data.snapshot.fundamentals);
+  const el = document.getElementById('fund');
+  if (!f) {
+    el.innerHTML = '<div class="empty">Temel veri alınamadı (ya da henüz toplanmadı).</div>';
+    return;
+  }
+  const price = f.price || (data.snapshot.quote && data.snapshot.quote.price);
+  let targetRow = '';
+  if (f.target_price && price) {
+    const up = (f.target_price - price) / price * 100;
+    const cls = up > 0 ? 'up' : 'down';
+    targetRow = `<div class="level-row"><span>Hedef Fiyat (analist)</span><span class="${cls}">${fmt(f.target_price)} TL (${up > 0 ? '+' : ''}${fmt(up)}%)</span></div>`;
+  }
+  const rows = [
+    ['Piyasa Değeri', trBig(f.market_cap)],
+    ['F/K (P/E)', f.pe !== null ? fmt(f.pe) : '--'],
+    ['İleri F/K', f.forward_pe !== null ? fmt(f.forward_pe) : '--'],
+    ['PD/DD (P/B)', f.pb !== null ? fmt(f.pb) : '--'],
+    ['FD/FAVÖK (EV/EBITDA)', f.ev_ebitda !== null ? fmt(f.ev_ebitda) : '--'],
+    ['Hisse Başı Kâr (EPS)', f.eps !== null ? fmt(f.eps) : '--'],
+    ['Özkaynak Kârlılığı (ROE)', f.roe !== null ? '%' + fmt(f.roe) : '--'],
+    ['Aktif Kârlılığı (ROA)', f.roa !== null ? '%' + fmt(f.roa) : '--'],
+    ['Net Kâr Marjı', f.profit_margin !== null ? '%' + fmt(f.profit_margin) : '--'],
+    ['Hasılat', (f.revenue !== null ? trBig(f.revenue) : '--') + (f.revenue_growth !== null ? ' (%' + fmt(f.revenue_growth) + ' büyüme)' : '')],
+    ['Net Kâr', trBig(f.net_income)],
+    ['Kâr Büyümesi', f.earnings_growth !== null ? '%' + fmt(f.earnings_growth) : '--'],
+    ['Serbest Nakit Akışı', trBig(f.free_cash_flow)],
+    ['Toplam Borç', trBig(f.total_debt)],
+    ['Nakit', trBig(f.total_cash)],
+    ['Özkaynak', trBig(f.total_equity)],
+    ['Temettü Verimi', f.dividend_yield !== null ? '%' + fmt(f.dividend_yield) : '--'],
+    ['Beta', f.beta !== null ? fmt(f.beta) : '--'],
+  ];
+  el.innerHTML = rows.map(r =>
+    `<div class="level-row"><span>${r[0]}</span><span>${r[1]}</span></div>`
+  ).join('') + targetRow;
 }
 
 async function renderSignals() {
