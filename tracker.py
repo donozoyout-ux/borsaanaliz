@@ -8,6 +8,7 @@ from pathlib import Path
 from bist_data import get_history, get_intraday, get_quote, market_label, normalize_symbol
 from fundamentals import get_fundamentals
 from indicators import build_snapshot, evaluate_signals
+from news import format_news_message, get_news
 from telegram_notifier import format_signal_message, is_configured, send_telegram_message
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -193,6 +194,7 @@ def _cycle(symbol: str) -> None:
         snapshot = build_snapshot(symbol, quote, ind, intraday, trend=_derive_trend(ind, quote["price"]))
         snapshot["market_label"] = market_label()
         snapshot["fundamentals"] = get_fundamentals(symbol)
+        snapshot["news"] = get_news(symbol)
         _set_snapshot(symbol, snapshot)
 
         for sig in signals:
@@ -211,9 +213,51 @@ def _cycle(symbol: str) -> None:
             })
         if signals:
             _add_log(f"{symbol}: {len(signals)} yeni sinyal.")
+
+        _process_important_news(symbol, quote)
     except Exception as exc:
         logger.exception("İzleme hatası %s: %s", symbol, exc)
         _add_log(f"{symbol}: hata -> {exc}")
+
+
+def _process_important_news(symbol: str, quote: dict) -> None:
+    try:
+        items = get_news(symbol)
+    except Exception:
+        return
+    important = [n for n in items if n.get("important")]
+    if not important:
+        return
+
+    state = _load_symbol_state(symbol)
+    seen = state.setdefault("seen_news", [])
+    fresh = [n for n in important if n["title"] not in seen]
+    if not fresh:
+        return
+
+    added = 0
+    for n in fresh:
+        seen.append(n["title"])
+        added += 1
+    seen[:] = seen[-40:]
+    _save_symbol_state(symbol, state)
+
+    msg = format_news_message(symbol, fresh)
+    sent = send_telegram_message(msg)
+    for n in fresh:
+        _add_signal({
+            "symbol": symbol,
+            "title": "ÖNEMLİ HABER",
+            "emoji": "📰",
+            "direction": "info",
+            "detail": n["title"],
+            "source": n.get("source", ""),
+            "url": n.get("url", ""),
+            "price": quote["price"],
+            "sent_telegram": sent,
+            "time": _now_str(),
+        })
+    _add_log(f"{symbol}: {added} önemli haber iletildi.")
 
 
 def _derive_trend(ind: dict, price: float) -> str:
