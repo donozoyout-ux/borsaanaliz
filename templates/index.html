@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BIST Canlı Analiz</title>
+<style>
+:root{--bg:#0A0E17;--surface:#131314;--panel:#1C2127;--line:rgba(255,255,255,.06);--txt:#E5E2E2;--mut:#909096;--up:#10B981;--down:#EF4444;--acc:#3B82F6}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.wrap{width:100%;max-width:560px}
+.logo{text-align:center;margin-bottom:32px}
+.logo h1{font-size:22px;font-weight:700;letter-spacing:.04em;background:linear-gradient(135deg,#3B82F6,#8B5CF6,#06B6D4);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.logo p{color:var(--mut);font-size:13px;margin-top:6px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px;box-shadow:0 20px 50px rgba(0,0,0,.45)}
+label{display:block;font-size:12px;color:var(--mut);letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px;font-weight:600}
+.searchbox{position:relative}
+input[type=text]{width:100%;background:#0d1220;border:1px solid var(--line);color:var(--txt);font-size:18px;padding:14px 16px;border-radius:10px;outline:none;transition:border .2s}
+input[type=text]:focus{border-color:var(--acc)}
+.suggest{position:absolute;top:calc(100% + 6px);left:0;right:0;background:#0d1220;border:1px solid var(--line);border-radius:10px;display:none;max-height:260px;overflow:auto;z-index:10}
+.suggest .it{padding:10px 14px;cursor:pointer;display:flex;justify-content:space-between;gap:10px;font-size:14px}
+.suggest .it:hover{background:rgba(59,130,246,.12)}
+.suggest .it b{color:var(--acc)}
+.suggest .it span{color:var(--mut);font-size:12px}
+.actions{display:flex;gap:10px;margin-top:18px}
+.btn{flex:1;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;background:var(--acc);color:#fff;transition:opacity .2s}
+.btn:hover{opacity:.88}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.status{margin-top:16px;font-size:13px;color:var(--mut);min-height:18px}
+.status.err{color:var(--down)}
+.foot{margin-top:24px;text-align:center;font-size:12px;color:#5a5f6b}
+.foot .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--up);margin-right:6px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">
+    <h1>BIST CANLI ANALİZ</h1>
+    <p>Hisseni gir, sürekli izleyelim, önemli sinyalleri Telegram'a atalım.</p>
+  </div>
+  <div class="card">
+    <label>Hangi hisseyi izleyelim?</label>
+    <div class="searchbox">
+      <input type="text" id="symbol" placeholder="örn. THYAO, AKBNK, ASELS" autocomplete="off" autofocus>
+      <div class="suggest" id="suggest"></div>
+    </div>
+    <div class="actions">
+      <button class="btn" id="startBtn" disabled>İzlemeye Başla →</button>
+    </div>
+    <div class="status" id="status">Sembol yaz, önerilerden seç.</div>
+  </div>
+  <div class="foot"><span class="dot"></span>Sistem 7/24 çalışır; direnç kırılımı, destek, dip, hacim ve indikatör sinyallerini anında iletir.</div>
+</div>
+
+<script>
+const input = document.getElementById('symbol');
+const suggest = document.getElementById('suggest');
+const startBtn = document.getElementById('startBtn');
+const statusEl = document.getElementById('status');
+let selected = '';
+let debounce = null;
+
+input.addEventListener('input', () => {
+  selected = '';
+  startBtn.disabled = true;
+  clearTimeout(debounce);
+  const q = input.value.trim();
+  if (!q) { suggest.style.display = 'none'; statusEl.textContent = 'Sembol yaz, önerilerden seç.'; statusEl.className = 'status'; return; }
+  debounce = setTimeout(() => search(q), 200);
+});
+
+async function search(q) {
+  try {
+    const r = await fetch('/api/search?q=' + encodeURIComponent(q));
+    const data = await r.json();
+    if (!data.results.length) {
+      suggest.style.display = 'none';
+      startBtn.disabled = false;
+      statusEl.textContent = `"${q}" için öneri yok. Yine de bu sembolü dene.`;
+      statusEl.className = 'status';
+      return;
+    }
+    suggest.innerHTML = '';
+    data.results.forEach(s => {
+      const div = document.createElement('div');
+      div.className = 'it';
+      div.innerHTML = `<b>${s.symbol}</b><span>${s.name}</span>`;
+      div.onclick = () => pick(s.symbol);
+      suggest.appendChild(div);
+    });
+    suggest.style.display = 'block';
+    statusEl.textContent = 'Bir öneri seç veya Enter ile doğrula.';
+    statusEl.className = 'status';
+  } catch(e) {
+    statusEl.textContent = 'Arama hatası: ' + e.message;
+    statusEl.className = 'status err';
+  }
+}
+
+function pick(sym) {
+  selected = sym;
+  input.value = sym;
+  suggest.style.display = 'none';
+  startBtn.disabled = false;
+  statusEl.textContent = `Seçildi: ${sym}. İzlemeyi başlatmak için tıkla.`;
+  statusEl.className = 'status';
+}
+
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const sym = selected || input.value.trim().toUpperCase();
+    if (sym) { suggest.style.display='none'; startBtn.disabled = false; selected = sym; input.value = sym; }
+  }
+  if (e.key === 'Escape') suggest.style.display = 'none';
+});
+document.addEventListener('click', e => { if (!e.target.closest('.searchbox')) suggest.style.display = 'none'; });
+
+startBtn.addEventListener('click', async () => {
+  const sym = (selected || input.value.trim()).toUpperCase();
+  if (!sym) return;
+  startBtn.disabled = true;
+  statusEl.textContent = `"${sym}" aranıyor...`;
+  statusEl.className = 'status';
+  try {
+    const r = await fetch('/api/validate/' + encodeURIComponent(sym));
+    const data = await r.json();
+    if (!data.ok) {
+      statusEl.textContent = data.error;
+      statusEl.className = 'status err';
+      startBtn.disabled = false;
+      return;
+    }
+    statusEl.textContent = `Bulundu: ${data.name} — ${data.price} TL. Yönlendiriliyorsunuz...`;
+    statusEl.className = 'status';
+    window.location.href = '/stock/' + data.symbol;
+  } catch(e) {
+    statusEl.textContent = 'Hata: ' + e.message;
+    statusEl.className = 'status err';
+    startBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
