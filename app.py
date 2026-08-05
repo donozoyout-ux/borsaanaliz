@@ -5,7 +5,7 @@ from flask import Flask, jsonify, render_template, request
 
 import db
 import tracker
-from bist_data import get_quote, normalize_symbol, search_symbols
+from bist_data import get_history, get_intraday, get_quote, normalize_symbol, search_symbols
 
 logging.basicConfig(level=logging.INFO)
 
@@ -99,6 +99,25 @@ def api_refresh(symbol):
         tracker.set_snapshot_now(clean, snapshot)
         return jsonify({"ok": True, "snapshot": snapshot})
     return jsonify({"ok": False, "error": "Veri alınamadı"}), 502
+
+
+@app.route("/api/chart/<symbol>")
+def api_chart(symbol):
+    clean = normalize_symbol(symbol)
+    intraday = get_intraday(clean)
+    daily = get_history(clean, "6mo", "1d")
+    price = None
+    quote = get_quote(clean)
+    if quote:
+        price = quote.get("price")
+    last_bar = intraday[-1] if intraday else (daily[-1] if daily else None)
+    return jsonify({
+        "symbol": clean,
+        "price": price,
+        "last": last_bar,
+        "intraday": intraday[-600:],
+        "daily": daily,
+    })
 
 
 @app.route("/api/db/stats")

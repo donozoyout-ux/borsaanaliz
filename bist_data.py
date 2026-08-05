@@ -22,6 +22,12 @@ _mem_cache: dict[str, tuple[float, dict]] = {}
 _cache_lock = threading.Lock()
 _MEM_TTL = 20
 
+_intraday_cache: dict[str, tuple[float, list[dict]]] = {}
+_INTRADAY_TTL = 10
+
+_history_cache: dict[str, tuple[float, list[dict]]] = {}
+_HISTORY_TTL = 300
+
 
 def normalize_symbol(symbol: str) -> str:
     s = (symbol or "").strip().upper()
@@ -111,16 +117,35 @@ def _result_to_bars(result: dict) -> list[dict]:
 
 
 def get_history(symbol: str, range_str: str = "6mo", interval: str = "1d") -> list[dict]:
+    clean = normalize_symbol(symbol)
+    key = f"{clean}:{range_str}:{interval}"
+    now = time.time()
+    with _cache_lock:
+        cached = _history_cache.get(key)
+        if cached and now - cached[0] < _HISTORY_TTL:
+            return cached[1]
     result = _fetch_chart(symbol, interval, range_str)
-    return _result_to_bars(result)
+    bars = _result_to_bars(result)
+    with _cache_lock:
+        _history_cache[key] = (now, bars)
+    return bars
 
 
 def get_intraday(symbol: str) -> list[dict]:
+    clean = normalize_symbol(symbol)
+    now = time.time()
+    with _cache_lock:
+        cached = _intraday_cache.get(clean)
+        if cached and now - cached[0] < _INTRADAY_TTL:
+            return cached[1]
     try:
         result = _fetch_chart(symbol, "1m", "1d")
     except RuntimeError:
         result = _fetch_chart(symbol, "5m", "1d")
-    return _result_to_bars(result)
+    bars = _result_to_bars(result)
+    with _cache_lock:
+        _intraday_cache[clean] = (now, bars)
+    return bars
 
 
 def get_price(symbol: str) -> Optional[float]:
