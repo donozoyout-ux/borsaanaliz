@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 
 from flask import Flask, jsonify, render_template, request
 
@@ -104,19 +105,42 @@ def api_refresh(symbol):
 @app.route("/api/chart/<symbol>")
 def api_chart(symbol):
     clean = normalize_symbol(symbol)
-    intraday = get_intraday(clean)
-    daily = get_history(clean, "6mo", "1d")
+    tf = request.args.get("range", "6mo")
+    tf = tf if tf in ("1h", "1d", "1mo", "6mo", "1y") else "6mo"
+    if tf in ("1h", "1d"):
+        bars = get_intraday(clean)
+        if tf == "1h":
+            from_t = int(time.time()) - 3600
+            bars = [b for b in bars if b["t"] >= from_t]
+        interval = "1m"
+    else:
+        bars = get_history(clean, tf, "1d")
+        interval = "1d"
     price = None
     quote = get_quote(clean)
     if quote:
         price = quote.get("price")
-    last_bar = intraday[-1] if intraday else (daily[-1] if daily else None)
+    snap = tracker.get_snapshot(clean)
+    levels = (snap or {}).get("levels") or {}
+    if not levels and bars:
+        try:
+            from indicators import support_resistance
+            levels = support_resistance(
+                [b["c"] for b in bars],
+                [b["h"] for b in bars],
+                [b["l"] for b in bars],
+                price or bars[-1]["c"],
+            )
+        except Exception:
+            levels = {}
     return jsonify({
         "symbol": clean,
         "price": price,
-        "last": last_bar,
-        "intraday": intraday[-600:],
-        "daily": daily,
+        "last": bars[-1] if bars else None,
+        "bars": bars,
+        "interval": interval,
+        "levels": levels,
+        "timeframe": tf,
     })
 
 

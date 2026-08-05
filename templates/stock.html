@@ -80,16 +80,18 @@ a{color:var(--mut);text-decoration:none}
 .fc-break .row{display:flex;align-items:center;gap:8px;padding:3px 0;color:var(--mut)}
 .fc-break .row .pts{font-weight:700;min-width:24px;text-align:right}
 .arch-note{font-size:11px;color:#5a5f6b;margin-top:6px}
-.chart-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.chart-toolbar{display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
 .chart-toolbar .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.chart-toolbar .seg button{border:none;background:transparent;color:var(--mut);padding:6px 12px;cursor:pointer;font-size:12px;transition:all .2s}
-.chart-toolbar .seg button.on{background:rgba(59,130,246,.15);color:var(--acc)}
-.chart-toolbar .chart-price{font-size:13px;color:var(--mut)}
-.chart-toolbar .chart-price b{color:var(--txt);font-size:15px;font-variant-numeric:tabular-nums}
+.chart-toolbar .seg button{border:none;background:transparent;color:var(--mut);padding:7px 13px;cursor:pointer;font-size:12.5px;transition:all .2s}
+.chart-toolbar .seg button:hover{color:var(--txt)}
+.chart-toolbar .seg button.on{background:rgba(59,130,246,.18);color:var(--acc);font-weight:700}
+.chart-toolbar .chart-price{font-size:13px;color:var(--mut);margin-left:auto}
+.chart-toolbar .chart-price b{color:var(--txt);font-size:16px;font-variant-numeric:tabular-nums}
 #chartEl{height:340px}
 #chartEl .empty{height:100%;display:flex;align-items:center;justify-content:center}
 .chart-cdnerr{font-size:12px;color:var(--warn);padding:8px 0}
 </style>
+<script src="{{ url_for('static', filename='js/lightweight-charts.js') }}"></script>
 </head>
 <body>
 <div class="header">
@@ -121,9 +123,12 @@ a{color:var(--mut);text-decoration:none}
   <div class="panel">
     <h3>📈 Fiyat Grafiği</h3>
     <div class="chart-toolbar">
-      <div class="seg">
-        <button id="mode1m" type="button" data-mode="1m">Gün İçi (1dk)</button>
-        <button id="mode1d" type="button" data-mode="1d" class="on">Günlük (6 ay)</button>
+      <div class="seg" id="tfSeg">
+        <button type="button" data-range="1h">1 saat</button>
+        <button type="button" data-range="1d">1 gün</button>
+        <button type="button" data-range="1mo">1 ay</button>
+        <button type="button" data-range="6mo" class="on">6 ay</button>
+        <button type="button" data-range="1y">1 yıl</button>
       </div>
       <span class="chart-price" id="chartPrice">--</span>
     </div>
@@ -171,19 +176,8 @@ const SYMBOL = {{ symbol | tojson }};
 let refreshTimer = null;
 
 // ---------- Grafik ----------
-let chart = null, candleSeries = null, volSeries = null, chartMode = '1d', lastChartData = null, latestLevels = {};
+let chart = null, candleSeries = null, volSeries = null, chartRange = '6mo', lastChartData = null;
 const SR_COLORS = ['#F59E0B', '#8B5CF6', '#EC4899', '#06B6D4'];
-
-function loadChartLib() {
-  return new Promise((res, rej) => {
-    if (window.LightweightCharts) return res();
-    const s = document.createElement('script');
-    s.src = 'https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js';
-    s.onload = () => window.LightweightCharts ? res() : rej('lib yüklenmedi');
-    s.onerror = () => rej('CDN erişilemedi');
-    document.head.appendChild(s);
-  });
-}
 
 function initChart() {
   const el = document.getElementById('chartEl');
@@ -209,25 +203,26 @@ function initChart() {
   new ResizeObserver(() => chart.applyOptions({width: parent.clientWidth})).observe(parent);
 }
 
-function toLwcBar(b, volumeColor) {
-  return {time: b.t, open: b.o, high: b.h, low: b.l, close: b.c, value: b.v, color: volumeColor || 'rgba(59,130,246,.35)'};
+function toLwcBar(b) {
+  const up = b.c >= b.o;
+  return {time: b.t, open: b.o, high: b.h, low: b.l, close: b.c,
+          value: b.v, color: up ? 'rgba(16,185,129,.35)' : 'rgba(239,68,68,.35)'};
 }
 
-function renderChart(data) {
-  lastChartData = data;
-  if (!chart || !candleSeries) return;
-  const d = lastChartData;
-  const bars = chartMode === '1m' ? (d.intraday || []) : (d.daily || []);
-  const lwc = bars.map(b => toLwcBar(b, b.c >= b.o ? 'rgba(16,185,129,.35)' : 'rgba(239,68,68,.35)'));
+function renderChart(data, fit) {
+  if (!chart || !candleSeries) { lastChartData = data; return; }
+  const d = data;
+  const bars = d.bars || [];
+  const lwc = bars.map(toLwcBar);
   candleSeries.setData(lwc.map(({time,open,high,low,close}) => ({time,open,high,low,close})));
   volSeries.setData(lwc.map(({time,value,color}) => ({time,value,color})));
-  chart.timeScale().fitContent();
+  chart.timeScale().applyOptions({timeVisible: d.interval === '1m', secondsVisible:false});
+  if (fit) chart.timeScale().fitContent();
 
-  // destek/direnç çizgileri
   if (candleSeries.priceLines) {
     candleSeries.priceLines().forEach(l => candleSeries.removePriceLine(l));
   }
-  const lv = d.levels || latestLevels;
+  const lv = d.levels || {};
   (lv.resistance || []).slice(0,4).forEach((p, i) => {
     candleSeries.createPriceLine({price:p, color:SR_COLORS[i], lineWidth:1, lineStyle:2,
       axisLabelVisible:true, title:`Direnç`, axisLabelColor:SR_COLORS[i]});
@@ -239,20 +234,24 @@ function renderChart(data) {
 
   const price = d.price != null ? d.price : (d.last && d.last.c);
   const priceEl = document.getElementById('chartPrice');
-  priceEl.innerHTML = price != null ? `Fiyat: <b>${fmt(price)} TL</b> · <span style="color:#5a5f6b">${bars.length} bar</span>` : '--';
+  const tfLabels = {1h:'Son 1 saat', 1d:'1 gün', 1mo:'1 ay', 6mo:'6 ay', 1y:'1 yıl'};
+  priceEl.innerHTML = price != null
+    ? `Fiyat: <b>${fmt(price)} TL</b> · <span style="color:#5a5f6b">${tfLabels[d.timeframe]||''} · ${bars.length} bar</span>`
+    : '--';
+  lastChartData = data;
 }
 
-async function loadChart() {
+async function loadChart(fit) {
   try {
-    const d = await j('/api/chart/' + SYMBOL);
-    renderChart(d);
+    const d = await j('/api/chart/' + SYMBOL + '?range=' + chartRange);
+    renderChart(d, fit);
   } catch(e) {}
 }
 
-function setChartMode(mode) {
-  chartMode = mode;
-  document.querySelectorAll('.chart-toolbar .seg button').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
-  if (chart && lastChartData) renderChart(lastChartData);
+function setChartRange(range) {
+  chartRange = range;
+  document.querySelectorAll('#tfSeg button').forEach(b => b.classList.toggle('on', b.dataset.range === range));
+  loadChart(true);
 }
 
 // ---------- Veri istekleri ----------
@@ -365,8 +364,6 @@ function render(data) {
   renderFund(data);
   renderNews(data);
   renderDbStats(data);
-  latestLevels = s.levels || {};
-  if (lastChartData) renderChart(lastChartData);
 }
 
 function stanceClass(st) {
@@ -547,23 +544,22 @@ async function refresh() {
   } catch(e) {}
   renderSignals();
   renderLogs();
-  loadChart();
+  loadChart(false);
 }
 
 async function start() {
   try { await j('/api/stock/' + SYMBOL + '/start', {method:'POST'}); } catch(e) {}
   try {
-    await loadChartLib();
     initChart();
   } catch(err) {
-    document.getElementById('chartEl').innerHTML = `<div class="chart-cdnerr">⚠️ Grafik kütüphanesi yüklenemedi (internet / CDN engeli). Diğer paneller çalışıyor.</div>`;
+    document.getElementById('chartEl').innerHTML = `<div class="chart-cdnerr">⚠️ Grafik kütüphanesi yüklenemedi. Diğer paneller çalışıyor.</div>`;
   }
   refresh();
   refreshTimer = setInterval(refresh, 15000);
 }
 
-document.querySelectorAll('.chart-toolbar .seg button').forEach(b => {
-  b.onclick = () => setChartMode(b.dataset.mode);
+document.querySelectorAll('#tfSeg button').forEach(b => {
+  b.onclick = () => setChartRange(b.dataset.range);
 });
 
 document.getElementById('stopBtn').onclick = async () => {
