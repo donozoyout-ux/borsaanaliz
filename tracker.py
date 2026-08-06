@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 import db
-from bist_data import get_history, get_intraday, get_quote, market_label, normalize_symbol
+from bist_data import get_history, get_intraday, get_quote, market_is_open, market_label, normalize_symbol
 from forecast import build_forecast, format_forecast_message
 from fundamentals import get_fundamentals
 from indicators import build_snapshot, evaluate_signals
@@ -250,26 +250,29 @@ def _cycle(symbol: str) -> None:
         _set_snapshot(symbol, snapshot)
         db.store_snapshot(symbol, snapshot)
 
-        _handle_stance_change(symbol, quote, forecast, symbol_state)
+        if not market_is_open():
+            _add_log(f"{symbol}: piyasa kapalı, sinyal/bildirim gönderilmedi.")
+        else:
+            _handle_stance_change(symbol, quote, forecast, symbol_state)
 
-        for sig in signals:
-            msg = format_signal_message(symbol, quote.get("name", ""), quote["price"], sig, market_label())
-            _add_log(f"{symbol}: SİNYAL -> {sig['title']} ({sig['detail'][:80]})")
-            sent = send_telegram_message(msg)
-            _add_signal({
-                "symbol": symbol,
-                "title": sig["title"],
-                "emoji": sig["emoji"],
-                "direction": sig.get("direction"),
-                "detail": sig["detail"],
-                "price": quote["price"],
-                "sent_telegram": sent,
-                "time": _now_str(),
-            })
-        if signals:
-            _add_log(f"{symbol}: {len(signals)} yeni sinyal.")
+            for sig in signals:
+                msg = format_signal_message(symbol, quote.get("name", ""), quote["price"], sig, market_label())
+                _add_log(f"{symbol}: SİNYAL -> {sig['title']} ({sig['detail'][:80]})")
+                sent = send_telegram_message(msg)
+                _add_signal({
+                    "symbol": symbol,
+                    "title": sig["title"],
+                    "emoji": sig["emoji"],
+                    "direction": sig.get("direction"),
+                    "detail": sig["detail"],
+                    "price": quote["price"],
+                    "sent_telegram": sent,
+                    "time": _now_str(),
+                })
+            if signals:
+                _add_log(f"{symbol}: {len(signals)} yeni sinyal.")
 
-        _process_important_news(symbol, quote)
+            _process_important_news(symbol, quote)
     except Exception as exc:
         logger.exception("İzleme hatası %s: %s", symbol, exc)
         _add_log(f"{symbol}: hata -> {exc}")

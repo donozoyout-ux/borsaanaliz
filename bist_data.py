@@ -246,13 +246,18 @@ def get_quote(symbol: str) -> Optional[dict]:
     return quote
 
 
+from datetime import datetime, timezone, timedelta
+
+IST = timezone(timedelta(hours=3))
+
+
 def market_is_open(now: Optional[datetime] = None) -> bool:
-    now = now or datetime.now()
-    hour = now.hour
-    minute = now.minute
+    now = now or datetime.now(IST)
     weekday = now.weekday()
-    open_time = (9 <= hour < 18) or (hour == 18 and minute < 15)
-    return weekday < 5 and open_time
+    if weekday >= 5:
+        return False
+    t = now.hour * 60 + now.minute
+    return 9 * 60 + 5 <= t < 18 * 60
 
 
 def market_label(now: Optional[datetime] = None) -> str:
