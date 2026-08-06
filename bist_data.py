@@ -131,6 +131,22 @@ def get_history(symbol: str, range_str: str = "6mo", interval: str = "1d") -> li
     return bars
 
 
+def _fetch_intraday_once(symbol: str) -> list[dict]:
+    try:
+        result = _fetch_chart(symbol, "1m", "1d")
+    except RuntimeError:
+        result = _fetch_chart(symbol, "5m", "1d")
+    return _result_to_bars(result)
+
+
+def _bars_are_stale(bars: list[dict], max_age: int = 300) -> bool:
+    if not bars:
+        return True
+    last_t = bars[-1]["t"]
+    now = time.time()
+    return now - last_t > max_age
+
+
 def get_intraday(symbol: str) -> list[dict]:
     clean = normalize_symbol(symbol)
     now = time.time()
@@ -138,11 +154,10 @@ def get_intraday(symbol: str) -> list[dict]:
         cached = _intraday_cache.get(clean)
         if cached and now - cached[0] < _INTRADAY_TTL:
             return cached[1]
-    try:
-        result = _fetch_chart(symbol, "1m", "1d")
-    except RuntimeError:
-        result = _fetch_chart(symbol, "5m", "1d")
-    bars = _result_to_bars(result)
+    bars = _fetch_intraday_once(clean)
+    if market_is_open() and _bars_are_stale(bars):
+        time.sleep(2)
+        bars = _fetch_intraday_once(clean)
     with _cache_lock:
         _intraday_cache[clean] = (now, bars)
     return bars
@@ -213,7 +228,7 @@ def get_quote(symbol: str) -> Optional[dict]:
         "market_time": market_time,
         "currency": meta.get("currency", "TRY"),
         "exchange": meta.get("exchangeName", ""),
-        "time": now,
+        "time": market_time or now,
     }
     with _cache_lock:
         _mem_cache[clean] = (now, quote)

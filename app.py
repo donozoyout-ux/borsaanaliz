@@ -6,7 +6,7 @@ from flask import Flask, jsonify, render_template, request
 
 import db
 import tracker
-from bist_data import get_history, get_intraday, get_quote, normalize_symbol, search_symbols
+from bist_data import get_history, get_intraday, get_quote, market_is_open, normalize_symbol, search_symbols
 
 logging.basicConfig(level=logging.INFO)
 
@@ -73,13 +73,29 @@ def api_stock(symbol):
                 "timestamp": None,
                 "market_label": None,
             }
+    quote = (snapshot or {}).get("quote") or get_quote(clean)
+    data_stale, data_time = _data_freshness(quote)
     return jsonify({
         "symbol": clean,
         "tracking": tracking,
         "snapshot": snapshot,
         "telegram": tracker.telegram_status(),
         "db": db_stats(),
+        "data_stale": data_stale,
+        "data_time": data_time,
     })
+
+
+def _data_freshness(quote):
+    now = time.time()
+    data_time = None
+    if quote:
+        data_time = quote.get("market_time")
+    if not data_time:
+        return False, None
+    if market_is_open() and now - data_time > 300:
+        return True, data_time
+    return False, data_time
 
 
 @app.route("/api/stock/<symbol>/refresh", methods=["POST"])
@@ -133,6 +149,7 @@ def api_chart(symbol):
             )
         except Exception:
             levels = {}
+    data_stale, data_time = _data_freshness(quote)
     return jsonify({
         "symbol": clean,
         "price": price,
@@ -141,6 +158,8 @@ def api_chart(symbol):
         "interval": interval,
         "levels": levels,
         "timeframe": tf,
+        "data_stale": data_stale,
+        "data_time": data_time,
     })
 
 

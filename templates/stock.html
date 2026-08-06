@@ -90,6 +90,7 @@ a{color:var(--mut);text-decoration:none}
 #chartEl{height:340px}
 #chartEl .empty{height:100%;display:flex;align-items:center;justify-content:center}
 .chart-cdnerr{font-size:12px;color:var(--warn);padding:8px 0}
+.stale-banner{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);color:var(--warn);border-radius:10px;padding:10px 14px;font-size:13px;line-height:1.6;margin-bottom:14px}
 </style>
 <script src="{{ url_for('static', filename='js/lightweight-charts.js') }}"></script>
 </head>
@@ -107,6 +108,11 @@ a{color:var(--mut);text-decoration:none}
 </div>
 
 <div class="container">
+  <div class="stale-banner" id="staleBanner" style="display:none">
+    ⚠️ <b>Veri kaynağı gecikmeli</b> — son güncelleme: <span id="staleTime"></span>.
+    Bu, Yahoo Finance'in BIST beslemesindeki geçici bir aksaklıktan kaynaklanıyor, sistemimizdeki bir hatadan değil. Kaynak düzelince fiyatlar otomatik güncellenecek.
+  </div>
+
   <div class="toolbar">
     <button class="btn" id="refreshNow">Şimdi Yenile</button>
     <button class="btn" id="tgTest">Test Mesajı Gönder</button>
@@ -235,8 +241,9 @@ function renderChart(data, fit) {
   const price = d.price != null ? d.price : (d.last && d.last.c);
   const priceEl = document.getElementById('chartPrice');
   const tfLabels = {'1h':'Son 1 saat', '1d':'1 gün', '1mo':'1 ay', '6mo':'6 ay', '1y':'1 yıl'};
+  const dataTxt = d.data_time ? ' · veri ' + new Date(d.data_time * 1000).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'}) : '';
   priceEl.innerHTML = price != null
-    ? `Fiyat: <b>${fmt(price)} TL</b> · <span style="color:#5a5f6b">${tfLabels[d.timeframe]||''} · ${bars.length} bar</span>`
+    ? `Fiyat: <b>${fmt(price)} TL</b> <span style="color:#5a5f6b">${tfLabels[d.timeframe]||''} · ${bars.length} bar${dataTxt}</span>`
     : '--';
   lastChartData = data;
 }
@@ -281,6 +288,15 @@ function priceColor(n) { return n > 0 ? 'up' : (n < 0 ? 'down' : ''); }
 function render(data) {
   const s = data.snapshot;
   const q = s.quote || {};
+
+  const staleEl = document.getElementById('staleBanner');
+  if (data.data_stale && data.data_time) {
+    staleEl.style.display = 'block';
+    document.getElementById('staleTime').textContent = new Date(data.data_time * 1000).toLocaleString('tr-TR',{dateStyle:'short',timeStyle:'short'});
+  } else {
+    staleEl.style.display = 'none';
+  }
+
   document.getElementById('sym').textContent = s.symbol || SYMBOL;
   document.getElementById('name').textContent = q.name || '';
 
@@ -296,6 +312,9 @@ function render(data) {
 
   const mkt = document.getElementById('market');
   mkt.textContent = s.market_label || 'durum: ...';
+  if (data.data_time) {
+    mkt.textContent += ' · veri ' + new Date(data.data_time * 1000).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
+  }
   mkt.className = 'market ' + (mkt.textContent.includes('AÇIK') ? 'open' : '');
 
   const trackingBadge = document.getElementById('trackingBadge');
