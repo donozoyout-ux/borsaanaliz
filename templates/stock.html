@@ -241,9 +241,10 @@ function renderChart(data, fit) {
   const price = d.price != null ? d.price : (d.last && d.last.c);
   const priceEl = document.getElementById('chartPrice');
   const tfLabels = {'1h':'Son 1 saat', '1d':'1 gün', '1mo':'1 ay', '6mo':'6 ay', '1y':'1 yıl'};
+  const live = (bars.length && bars[bars.length-1].live) ? ' <b style="color:var(--up)">⚡ canlı</b>' : '';
   const dataTxt = d.data_time ? ' · veri ' + new Date(d.data_time * 1000).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'}) : '';
   priceEl.innerHTML = price != null
-    ? `Fiyat: <b>${fmt(price)} TL</b> <span style="color:#5a5f6b">${tfLabels[d.timeframe]||''} · ${bars.length} bar${dataTxt}</span>`
+    ? `Fiyat: <b>${fmt(price)} TL</b>${live} <span style="color:#5a5f6b">${tfLabels[d.timeframe]||''} · ${bars.length} bar${dataTxt}</span>`
     : '--';
   lastChartData = data;
 }

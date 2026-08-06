@@ -91,11 +91,40 @@ def _data_freshness(quote):
     data_time = None
     if quote:
         data_time = quote.get("market_time")
+        if quote.get("source") == "tradingview":
+            return False, data_time
     if not data_time:
         return False, None
     if market_is_open() and now - data_time > 300:
         return True, data_time
     return False, data_time
+
+
+def _extend_live(clean: str, bars: list[dict]) -> list[dict]:
+    if not bars:
+        return bars
+    if not market_is_open():
+        return bars
+    if time.time() - bars[-1]["t"] <= 300:
+        return bars
+    if time.time() - bars[-1]["t"] > 26 * 3600:
+        return bars
+    try:
+        from live import tv_quote
+        tvq = tv_quote(clean)
+    except Exception:
+        return bars
+    if not tvq:
+        return bars
+    px = tvq["price"]
+    last = bars[-1]
+    merged = dict(last)
+    merged["c"] = px
+    merged["h"] = max(last["h"], px)
+    merged["l"] = min(last["l"], px)
+    merged["t"] = int(time.time())
+    merged["live"] = True
+    return bars[:-1] + [merged]
 
 
 @app.route("/api/stock/<symbol>/refresh", methods=["POST"])
@@ -127,10 +156,12 @@ def api_chart(symbol):
         bars = get_intraday(clean)
         if tf == "1h":
             from_t = int(time.time()) - 3600
-            bars = [b for b in bars if b["t"] >= from_t]
+            if bars and bars[-1]["t"] >= from_t:
+                bars = [b for b in bars if b["t"] >= from_t]
+        bars = _extend_live(clean, bars)
         interval = "1m"
     else:
-        bars = get_history(clean, tf, "1d")
+        bars = _extend_live(clean, get_history(clean, tf, "1d"))
         interval = "1d"
     price = None
     quote = get_quote(clean)

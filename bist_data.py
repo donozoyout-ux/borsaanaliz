@@ -185,6 +185,16 @@ def get_quote(symbol: str) -> Optional[dict]:
             return cached[1]
 
     try:
+        from live import tv_quote
+        tvq = tv_quote(clean)
+    except Exception:
+        tvq = None
+    if tvq:
+        with _cache_lock:
+            _mem_cache[clean] = (now, tvq)
+        return tvq
+
+    try:
         result = _fetch_chart(clean, "1m", "1d")
     except RuntimeError:
         return None
@@ -228,6 +238,7 @@ def get_quote(symbol: str) -> Optional[dict]:
         "market_time": market_time,
         "currency": meta.get("currency", "TRY"),
         "exchange": meta.get("exchangeName", ""),
+        "source": "yahoo",
         "time": market_time or now,
     }
     with _cache_lock:
