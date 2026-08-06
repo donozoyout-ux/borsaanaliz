@@ -188,6 +188,7 @@ const SR_COLORS = ['#F59E0B', '#8B5CF6', '#EC4899', '#06B6D4'];
 function initChart() {
   const el = document.getElementById('chartEl');
   const parent = el.parentElement;
+  el.innerHTML = '';
   chart = LightweightCharts.createChart(el, {
     layout: {background:{type:'solid',color:'#1C2127'}, textColor:'#909096', fontSize:11},
     grid: {vertLines:{color:'rgba(255,255,255,.04)'}, horzLines:{color:'rgba(255,255,255,.04)'}},
@@ -229,13 +230,13 @@ function renderChart(data, fit) {
     candleSeries.priceLines().forEach(l => candleSeries.removePriceLine(l));
   }
   const lv = d.levels || {};
-  (lv.resistance || []).slice(0,4).forEach((p, i) => {
+  (lv.resistance || []).slice(0,2).forEach((p, i) => {
     candleSeries.createPriceLine({price:p, color:SR_COLORS[i], lineWidth:1, lineStyle:2,
-      axisLabelVisible:true, title:`Direnç`, axisLabelColor:SR_COLORS[i]});
+      axisLabelVisible:false});
   });
-  (lv.support || []).slice(0,4).forEach((p, i) => {
+  (lv.support || []).slice(0,2).forEach((p, i) => {
     candleSeries.createPriceLine({price:p, color:SR_COLORS[i], lineWidth:1, lineStyle:2,
-      axisLabelVisible:true, title:`Destek`, axisLabelColor:SR_COLORS[i]});
+      axisLabelVisible:false});
   });
 
   const price = d.price != null ? d.price : (d.last && d.last.c);
