@@ -45,6 +45,15 @@ CREATE TABLE IF NOT EXISTS signals(
   detail TEXT, source TEXT, url TEXT, price REAL,
   sent INTEGER DEFAULT 0, time TEXT
 );
+CREATE TABLE IF NOT EXISTS positions(
+  symbol TEXT PRIMARY KEY,
+  buy_price REAL NOT NULL,
+  quantity REAL NOT NULL,
+  buy_date TEXT,
+  stop REAL,
+  target REAL,
+  created_at REAL
+);
 CREATE INDEX IF NOT EXISTS idx_bars_symbol ON price_bars(symbol, interval, ts);
 CREATE INDEX IF NOT EXISTS idx_news_symbol ON news(symbol, fetched_at);
 CREATE INDEX IF NOT EXISTS idx_signals_symbol ON signals(symbol, id);
@@ -206,6 +215,56 @@ def get_last_snapshot(symbol: str) -> dict | None:
     return {"ts": row[0], **json.loads(row[1])}
 
 
+# ---------- positions ----------
+
+def save_position(pos: dict) -> None:
+    with _lock:
+        conn = _conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO positions(symbol, buy_price, quantity, buy_date, stop, target, created_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (
+                pos["symbol"],
+                float(pos.get("buy_price") or 0),
+                float(pos.get("quantity") or 0),
+                pos.get("buy_date", ""),
+                pos.get("stop"),
+                pos.get("target"),
+                time.time(),
+            ),
+        )
+        conn.commit()
+
+
+def get_position(symbol: str) -> dict | None:
+    with _lock:
+        conn = _conn()
+        cur = conn.execute(
+            "SELECT symbol, buy_price, quantity, buy_date, stop, target, created_at "
+            "FROM positions WHERE symbol=?",
+            (symbol,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "symbol": row[0],
+        "buy_price": row[1],
+        "quantity": row[2],
+        "buy_date": row[3],
+        "stop": row[4],
+        "target": row[5],
+        "created_at": row[6],
+    }
+
+
+def delete_position(symbol: str) -> None:
+    with _lock:
+        conn = _conn()
+        conn.execute("DELETE FROM positions WHERE symbol=?", (symbol,))
+        conn.commit()
+
+
 # ---------- signals ----------
 
 def store_signal(sig: dict) -> None:
@@ -253,7 +312,7 @@ def stats() -> dict:
     out = {}
     with _lock:
         conn = _conn()
-        for table in ("price_bars", "news", "snapshots", "signals", "fundamentals"):
+        for table in ("price_bars", "news", "snapshots", "signals", "fundamentals", "positions"):
             try:
                 cur = conn.execute(f"SELECT COUNT(*) FROM {table}")
                 out[table] = cur.fetchone()[0]

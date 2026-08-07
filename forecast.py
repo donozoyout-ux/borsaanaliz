@@ -121,6 +121,16 @@ def technical_score(ind: dict, quote: dict) -> dict:
     return {"score": score, "stance": stance, "breakdown": breakdown}
 
 
+def direction_probability(sc: dict) -> dict:
+    """Bileşik teknik skordan yön olasılığı (merkez 50, skor ±10 arası)."""
+    score = sc["score"]
+    pct = 50 + score * 3
+    pct = max(15, min(85, pct))
+    direction = "up" if pct >= 55 else ("down" if pct <= 45 else "neutral")
+    label = {"up": "YUKARI", "down": "AŞAĞI", "neutral": "NÖTR"}[direction]
+    return {"pct": round(pct), "direction": direction, "label": label}
+
+
 def build_forecast(symbol: str, quote: dict, ind: dict, history: list[dict],
                    fundamentals: Optional[dict] = None) -> dict:
     price = float(quote["price"])
@@ -205,6 +215,23 @@ def build_forecast(symbol: str, quote: dict, ind: dict, history: list[dict],
         })
     bull = bull[:4]
 
+    # Tavan/zirve hedefi: en yüksek makul yukarı hedef (analist hedefi çok uzaksa
+    # fiilen ulaşılabilir tavan olarak en yüksek teknik hedef seçilir).
+    top = None
+    if bull:
+        practical = [t for t in bull if t["label"] != "Analist hedefi"]
+        candidates = practical or bull
+        best = max(candidates, key=lambda t: t["price"])
+        if best["price"] > price:
+            top = {"price": round(best["price"], 2), "pct": round((best["price"] - price) / price * 100, 2)}
+
+    # Dip/taban: en düşük makul aşağı hedef.
+    bottom = None
+    if bear:
+        worst = min(bear, key=lambda t: t["price"])
+        if worst["price"] < price:
+            bottom = {"price": round(worst["price"], 2), "pct": round((worst["price"] - price) / price * 100, 2)}
+
     summary = _build_summary(sc["stance"], sc["score"], bull, bear, stop)
 
     return {
@@ -214,6 +241,9 @@ def build_forecast(symbol: str, quote: dict, ind: dict, history: list[dict],
         "breakdown": sc["breakdown"],
         "bull": bull,
         "bear": bear,
+        "top": top,
+        "bottom": bottom,
+        "probability": direction_probability(sc),
         "expected_1d": expected_1d,
         "expected_1w": expected_1w,
         "stop": stop,
@@ -254,10 +284,18 @@ def format_forecast_message(symbol: str, forecast: dict) -> str:
         lines.append("🔼 <b>Yukarı hedefler:</b>")
         for t in forecast["bull"][:3]:
             lines.append(f"   • {t['label']}: <b>{t['price']}</b> (%{t['pct']:+})")
+    if forecast.get("top"):
+        lines.append(f"🎯 Tavan/Zirve hedefi: <b>{forecast['top']['price']}</b> TL")
+    if forecast.get("probability"):
+        pr = forecast["probability"]
+        arrow = "▲" if pr["direction"] == "up" else ("▼" if pr["direction"] == "down" else "—")
+        lines.append(f"📊 Yön olasılığı: {arrow} <b>%{pr['pct']}</b> ({pr['label']})")
     if forecast["bear"]:
         lines.append("🔽 <b>Aşağı riskler:</b>")
         for t in forecast["bear"][:3]:
             lines.append(f"   • {t['label']}: <b>{t['price']}</b> (%{t['pct']:+})")
+    if forecast.get("bottom"):
+        lines.append(f"🕳️ Dip/Taban riski: <b>{forecast['bottom']['price']}</b> TL")
     if forecast["stop"]:
         lines.append(f"🛑 Stop seviyesi: <b>{forecast['stop']}</b> TL")
     lines.append("")

@@ -83,6 +83,13 @@ def api_stock(symbol):
                     snapshot = fresh
             except Exception:
                 pass
+    if snapshot:
+        snapshot["strategy"] = snapshot.get("strategy") or _build_strategy_fallback(clean, snapshot)
+        position = db.get_position(clean)
+        if position:
+            snapshot["position"] = position
+        elif "position" in snapshot:
+            snapshot.pop("position", None)
     if not snapshot:
         quote = get_quote(clean)
         if quote:
@@ -107,6 +114,21 @@ def api_stock(symbol):
         "data_stale": data_stale,
         "data_time": data_time,
     })
+
+
+def _build_strategy_fallback(clean: str, snapshot: dict) -> dict:
+    """Eski snapshot'larda strateji yoksa indikatör + forecast üzerinden türet."""
+    try:
+        from strategy import build_strategy
+        ind = snapshot.get("indicators") or {}
+        forecast = snapshot.get("forecast")
+        quote = snapshot.get("quote")
+        if not forecast or not quote:
+            return {}
+        ind.setdefault("sr", {})
+        return build_strategy(clean, quote, ind, forecast)
+    except Exception:
+        return {}
 
 
 def _data_freshness(quote):
@@ -250,6 +272,51 @@ def api_stop(symbol):
 def api_signals(symbol):
     clean = normalize_symbol(symbol)
     return jsonify({"signals": tracker.get_signals(clean)})
+
+
+@app.route("/api/position/<symbol>")
+def api_position_get(symbol):
+    clean = normalize_symbol(symbol)
+    pos = db.get_position(clean)
+    if not pos:
+        return jsonify({"ok": False, "error": "Pozisyon kaydı yok"}), 404
+    return jsonify({"ok": True, "position": pos})
+
+
+@app.route("/api/position/<symbol>", methods=["POST"])
+def api_position_save(symbol):
+    clean = normalize_symbol(symbol)
+    data = request.get_json(silent=True) or {}
+    try:
+        buy_price = float(data.get("buy_price"))
+        quantity = float(data.get("quantity"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Alış fiyatı ve adet sayısal olmalı."}), 400
+    if buy_price <= 0 or quantity <= 0:
+        return jsonify({"ok": False, "error": "Alış fiyatı ve adet 0'dan büyük olmalı."}), 400
+    def _opt(v):
+        try:
+            v = float(v)
+            return v if v > 0 else None
+        except (TypeError, ValueError):
+            return None
+    position = {
+        "symbol": clean,
+        "buy_price": buy_price,
+        "quantity": quantity,
+        "buy_date": str(data.get("buy_date") or ""),
+        "stop": _opt(data.get("stop")),
+        "target": _opt(data.get("target")),
+    }
+    db.save_position(position)
+    return jsonify({"ok": True, "position": position})
+
+
+@app.route("/api/position/<symbol>", methods=["DELETE"])
+def api_position_delete(symbol):
+    clean = normalize_symbol(symbol)
+    db.delete_position(clean)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/logs")

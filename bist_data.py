@@ -250,16 +250,52 @@ from datetime import datetime, timezone, timedelta
 
 IST = timezone(timedelta(hours=3))
 
+# BIST Pay Piyasası: sürekli işlem 10:00 - 18:00 (İstanbul saati, UTC+3 sabit)
+MARKET_OPEN_MIN = 10 * 60
+MARKET_CLOSE_MIN = 18 * 60
+
+
+def _as_ist(now: Optional[datetime]) -> datetime:
+    if now is None:
+        return datetime.now(IST)
+    if now.tzinfo is None:
+        return now.replace(tzinfo=IST)
+    return now.astimezone(IST)
+
 
 def market_is_open(now: Optional[datetime] = None) -> bool:
-    now = now or datetime.now(IST)
+    now = _as_ist(now)
     weekday = now.weekday()
     if weekday >= 5:
         return False
     t = now.hour * 60 + now.minute
-    return 9 * 60 + 5 <= t < 18 * 60
+    return MARKET_OPEN_MIN <= t < MARKET_CLOSE_MIN
+
+
+def seconds_until_open(now: Optional[datetime] = None) -> Optional[float]:
+    """Bir sonraki hafta içi 10:00 İstanbul açılışına kalan saniye."""
+    now = _as_ist(now)
+    for i in range(8):
+        candidate = now + timedelta(days=i)
+        if candidate.weekday() >= 5:
+            continue
+        open_dt = candidate.replace(hour=10, minute=0, second=0, microsecond=0)
+        if open_dt > now:
+            return (open_dt - now).total_seconds()
+    return None
+
+
+def market_info(now: Optional[datetime] = None) -> dict:
+    now = _as_ist(now)
+    is_open = market_is_open(now)
+    return {
+        "is_open": is_open,
+        "label": "PİYASA AÇIK" if is_open else "PİYASA KAPALI",
+        "open": "10:00",
+        "close": "18:00",
+        "next_open_in": seconds_until_open(now),
+    }
 
 
 def market_label(now: Optional[datetime] = None) -> str:
-    now = now or datetime.now()
-    return "PİYASA AÇIK" if market_is_open(now) else "PİYASA KAPALI"
+    return market_info(now)["label"]

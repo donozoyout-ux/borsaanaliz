@@ -9,11 +9,13 @@ from pathlib import Path
 socket.setdefaulttimeout(25)
 
 import db
-from bist_data import get_history, get_intraday, get_quote, market_is_open, market_label, normalize_symbol
+from bist_data import (get_history, get_intraday, get_quote, market_is_open,
+                       market_label, normalize_symbol, seconds_until_open)
 from forecast import build_forecast, format_forecast_message
 from fundamentals import get_fundamentals
 from indicators import build_snapshot, evaluate_signals
 from news import format_news_message, get_news
+from strategy import build_strategy, format_strategy_message
 from telegram_notifier import format_signal_message, is_configured, send_telegram_message
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -180,34 +182,39 @@ def _save_symbol_state(symbol: str, state: dict) -> None:
 
 def collect_snapshot(symbol: str) -> dict | None:
     """Anlık tam snapshot üretir (signal göndermez, DB yazmaz). Sayfa açılışında kullanılır."""
-    quote = get_quote(symbol)
+    clean = normalize_symbol(symbol)
+    quote = get_quote(clean)
     if not quote:
         return None
 
-    history = get_history(symbol, "6mo", "1d")
+    history = get_history(clean, "6mo", "1d")
     if len(history) < 30:
-        history = get_history(symbol, "3mo", "1d")
+        history = get_history(clean, "3mo", "1d")
     if len(history) < 15:
         return None
 
-    intraday = get_intraday(symbol)
+    intraday = get_intraday(clean)
     closes = [b["c"] for b in history]
     highs = [b["h"] for b in history]
     lows = [b["l"] for b in history]
     volumes = [b["v"] for b in history]
 
-    symbol_state = _load_symbol_state(symbol)
-    ind, _signals = evaluate_signals(symbol, quote, closes, highs, lows, volumes, intraday, symbol_state)
+    symbol_state = _load_symbol_state(clean)
+    ind, _signals = evaluate_signals(clean, quote, closes, highs, lows, volumes, intraday, symbol_state)
 
-    fundamentals = get_fundamentals(symbol)
-    news_items = get_news(symbol)
-    forecast = build_forecast(symbol, quote, ind, history, fundamentals)
+    fundamentals = get_fundamentals(clean)
+    news_items = get_news(clean)
+    forecast = build_forecast(clean, quote, ind, history, fundamentals)
 
-    snapshot = build_snapshot(symbol, quote, ind, intraday, trend=_derive_trend(ind, quote["price"]))
+    snapshot = build_snapshot(clean, quote, ind, intraday, trend=_derive_trend(ind, quote["price"]))
     snapshot["market_label"] = market_label()
     snapshot["fundamentals"] = fundamentals
     snapshot["news"] = news_items
     snapshot["forecast"] = forecast
+    snapshot["strategy"] = build_strategy(clean, quote, ind, forecast)
+    position = db.get_position(clean)
+    if position:
+        snapshot["position"] = position
     return snapshot
 
 
@@ -248,12 +255,16 @@ def _cycle(symbol: str) -> None:
         fundamentals = get_fundamentals(symbol)
         news_items = get_news(symbol)
         forecast = build_forecast(symbol, quote, ind, history, fundamentals)
+        position = db.get_position(symbol)
 
         snapshot = build_snapshot(symbol, quote, ind, intraday, trend=_derive_trend(ind, quote["price"]))
         snapshot["market_label"] = market_label()
         snapshot["fundamentals"] = fundamentals
         snapshot["news"] = news_items
         snapshot["forecast"] = forecast
+        snapshot["strategy"] = build_strategy(symbol, quote, ind, forecast, position)
+        if position:
+            snapshot["position"] = position
         _set_snapshot(symbol, snapshot)
         db.store_snapshot(symbol, snapshot)
 
@@ -263,6 +274,7 @@ def _cycle(symbol: str) -> None:
             _add_log(f"{symbol}: veri bayat (kaynak gecikmeli), sinyal/bildirim gönderilmedi.")
         else:
             _handle_stance_change(symbol, quote, forecast, symbol_state)
+            _handle_strategy_change(symbol, quote, snapshot["strategy"], symbol_state)
 
             for sig in signals:
                 msg = format_signal_message(symbol, quote.get("name", ""), quote["price"], sig, market_label())
@@ -328,6 +340,35 @@ def _handle_stance_change(symbol: str, quote: dict, forecast: dict, symbol_state
     _add_log(f"{symbol}: GÖRÜNÜM DEĞİŞTİ -> {prev_stance} → {new_stance}")
 
 
+def _handle_strategy_change(symbol: str, quote: dict, strategy: dict, symbol_state: dict) -> None:
+    new_action = strategy.get("action", "BEKLE")
+    prev_action = symbol_state.get("prev_strategy_action")
+    if new_action in ("BEKLE", "TUT"):
+        symbol_state["prev_strategy_action"] = new_action
+        return
+    if prev_action == new_action:
+        return
+    last_msg = symbol_state.get("strategy_msg_at", 0)
+    if time.time() - last_msg < 4 * 3600:
+        return
+    symbol_state["prev_strategy_action"] = new_action
+    symbol_state["strategy_msg_at"] = time.time()
+    _save_symbol_state(symbol, symbol_state)
+    msg = format_strategy_message(symbol, strategy)
+    sent = send_telegram_message(msg)
+    _add_signal({
+        "symbol": symbol,
+        "title": f"STRATEJİ: {new_action}",
+        "emoji": "🟢" if new_action == "AL" else "🔴",
+        "direction": new_action,
+        "detail": "; ".join(strategy.get("reasons") or [])[:160],
+        "price": quote["price"],
+        "sent_telegram": sent,
+        "time": _now_str(),
+    })
+    _add_log(f"{symbol}: STRATEJİ DEĞİŞTİ -> {new_action}")
+
+
 def _process_important_news(symbol: str, quote: dict) -> None:
     try:
         items = get_news(symbol)
@@ -386,7 +427,21 @@ def _cycle_lock(symbol: str) -> threading.Lock:
 
 def _worker() -> None:
     _add_log("İzleme motoru başlatıldı.")
+    was_open = None
     while not _worker_stop_event.is_set():
+        open_now = market_is_open()
+        if was_open is not None and was_open != open_now:
+            _add_log("Piyasa açıldı, izleme devam ediyor." if open_now else "Piyasa kapandı, uyku moduna geçildi.")
+        was_open = open_now
+
+        if not open_now:
+            wait = seconds_until_open()
+            if wait is not None and wait > 0:
+                _worker_stop_event.wait(timeout=min(wait, 600))
+                continue
+            _worker_stop_event.wait(timeout=60)
+            continue
+
         syms = tracked_symbols()
         if not syms:
             _worker_stop_event.wait(timeout=5)
@@ -416,7 +471,8 @@ def _ensure_worker() -> None:
     with _last_activity_lock:
         idle = now - _last_activity
     if _worker_thread and _worker_thread.is_alive():
-        if idle > 300:
+        # Piyasa kapalıyken worker bilinçli olarak uyur; "sessiz" sayılmaz.
+        if market_is_open() and idle > 300:
             _add_log(f"İzleme motoru {idle:.0f} sn'dir sessiz — yeniden başlatılıyor.")
             if _worker_stop_event:
                 _worker_stop_event.set()
