@@ -252,6 +252,8 @@ def _cycle(symbol: str) -> None:
 
         if not market_is_open():
             _add_log(f"{symbol}: piyasa kapalı, sinyal/bildirim gönderilmedi.")
+        elif _quote_is_stale(quote):
+            _add_log(f"{symbol}: veri bayat (kaynak gecikmeli), sinyal/bildirim gönderilmedi.")
         else:
             _handle_stance_change(symbol, quote, forecast, symbol_state)
 
@@ -278,6 +280,15 @@ def _cycle(symbol: str) -> None:
         _add_log(f"{symbol}: hata -> {exc}")
 
 
+def _quote_is_stale(quote: dict) -> bool:
+    if not quote:
+        return True
+    if quote.get("source") == "tradingview":
+        return False
+    mt = quote.get("market_time")
+    return bool(mt and market_is_open() and time.time() - mt > 300)
+
+
 def _handle_stance_change(symbol: str, quote: dict, forecast: dict, symbol_state: dict) -> None:
     new_stance = forecast.get("stance", "NÖTR")
     prev_stance = symbol_state.get("prev_stance")
@@ -287,6 +298,12 @@ def _handle_stance_change(symbol: str, quote: dict, forecast: dict, symbol_state
     _save_symbol_state(symbol, symbol_state)
     if prev_stance is None:
         return
+    last_msg = symbol_state.get("stance_msg_at", 0)
+    if time.time() - last_msg < 4 * 3600:
+        _add_log(f"{symbol}: görünüm değişti ama 4 saat içinde tekrar mesaj gönderilmedi ({prev_stance} → {new_stance}).")
+        return
+    symbol_state["stance_msg_at"] = time.time()
+    _save_symbol_state(symbol, symbol_state)
     msg = format_forecast_message(symbol, forecast)
     sent = send_telegram_message(msg)
     _add_signal({

@@ -313,7 +313,7 @@ function render(data) {
   }
 
   const mkt = document.getElementById('market');
-  mkt.textContent = s.market_label || 'durum: ...';
+  mkt.textContent = data.market_label || s.market_label || 'durum: ...';
   if (data.data_time) {
     mkt.textContent += ' · veri ' + new Date(data.data_time * 1000).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'});
   }

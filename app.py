@@ -6,7 +6,7 @@ from flask import Flask, jsonify, render_template, request
 
 import db
 import tracker
-from bist_data import get_history, get_intraday, get_quote, market_is_open, normalize_symbol, search_symbols
+from bist_data import get_history, get_intraday, get_quote, market_is_open, market_label, normalize_symbol, search_symbols
 
 logging.basicConfig(level=logging.INFO)
 
@@ -79,6 +79,7 @@ def api_stock(symbol):
         "symbol": clean,
         "tracking": tracking,
         "snapshot": snapshot,
+        "market_label": market_label(),
         "telegram": tracker.telegram_status(),
         "db": db_stats(),
         "data_stale": data_stale,

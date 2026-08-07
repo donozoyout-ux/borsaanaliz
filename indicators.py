@@ -307,7 +307,8 @@ def evaluate_signals(symbol: str, quote: dict, closes: list[float], highs: list[
 
     # --- 5. RSI aşırı alım / satım bölgeleri ---
     prev_zone = prev_state.get("rsi_zone", "normal")
-    if zone != prev_zone:
+    rsi_last = prev_state.get("rsi_last_fire", 0)
+    if zone != prev_zone and now - rsi_last > 7200:
         if zone == "oversold":
             signals.append({
                 "type": "rsi_oversold", "direction": "bull", "emoji": "🟢",
@@ -320,6 +321,7 @@ def evaluate_signals(symbol: str, quote: dict, closes: list[float], highs: list[
                 "title": "RSI AŞIRI ALIM",
                 "detail": f"RSI <b>{rsi_val:.1f}</b> seviyesine çıktı (70 üstü) — aşırı yükseliş, kar satışı riski",
             })
+        state["rsi_last_fire"] = now
         state["rsi_zone"] = zone
 
     # --- 6. MACD kesişimleri ---
@@ -327,19 +329,22 @@ def evaluate_signals(symbol: str, quote: dict, closes: list[float], highs: list[
     macd_sig = ind["macd_signal"]
     prev_line = prev_state.get("macd_line")
     prev_sig = prev_state.get("macd_signal")
-    if prev_line is not None and prev_sig is not None:
+    macd_last = prev_state.get("macd_last_fire", 0)
+    if prev_line is not None and prev_sig is not None and now - macd_last > 21600:
         if prev_line <= prev_sig and macd_line > macd_sig:
             signals.append({
                 "type": "macd_bull", "direction": "bull", "emoji": "🟢",
                 "title": "MACD ALIM KESİŞİMİ",
                 "detail": f"MACD ({macd_line:.3f}) sinyal çizgisini ({macd_sig:.3f}) yukarı kesti",
             })
+            state["macd_last_fire"] = now
         elif prev_line >= prev_sig and macd_line < macd_sig:
             signals.append({
                 "type": "macd_bear", "direction": "bear", "emoji": "🔴",
                 "title": "MACD SATIM KESİŞİMİ",
                 "detail": f"MACD ({macd_line:.3f}) sinyal çizgisini ({macd_sig:.3f}) aşağı kesti",
             })
+            state["macd_last_fire"] = now
     state["macd_line"] = macd_line
     state["macd_signal"] = macd_sig
 
@@ -356,7 +361,7 @@ def evaluate_signals(symbol: str, quote: dict, closes: list[float], highs: list[
 
     # --- 8. Önemli fiyat hareketi ---
     big_last = prev_state.get("bigmove_last_fire", 0)
-    if abs(change_pct) >= 3.0 and now - big_last > 1800:
+    if abs(change_pct) >= 3.0 and now - big_last > 14400:
         up = change_pct > 0
         signals.append({
             "type": "big_move", "direction": "bull" if up else "bear",
@@ -367,12 +372,13 @@ def evaluate_signals(symbol: str, quote: dict, closes: list[float], highs: list[
         state["bigmove_last_fire"] = now
 
     # --- 9. RSI bölgeden çıkış (normalleşme) ---
-    if zone == "normal" and prev_zone in ("overbought", "oversold"):
+    if zone == "normal" and prev_zone in ("overbought", "oversold") and now - rsi_last > 7200:
         signals.append({
             "type": "rsi_normalize", "direction": "info", "emoji": "⚪",
             "title": "RSI NORMALE DÖNDÜ",
             "detail": f"RSI {rsi_val:.1f} ile aşırı alım/satım bölgesinden çıktı ({prev_zone})",
         })
+        state["rsi_last_fire"] = now
 
     state["prev_close"] = price
     state["rsi_zone"] = zone
