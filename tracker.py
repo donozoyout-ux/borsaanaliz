@@ -1,9 +1,12 @@
 import json
 import logging
+import socket
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
+
+socket.setdefaulttimeout(25)
 
 import db
 from bist_data import get_history, get_intraday, get_quote, market_is_open, market_label, normalize_symbol
@@ -28,7 +31,11 @@ MAX_LOGS = 200
 _state_lock = threading.Lock()
 _tracked: dict[str, dict] = {}
 _worker_thread: threading.Thread | None = None
-_stop_event = threading.Event()
+_worker_stop_event: threading.Event | None = None
+_cycle_locks: dict[str, threading.Lock] = {}
+_cycle_locks_lock = threading.Lock()
+_last_activity = time.time()
+_last_activity_lock = threading.Lock()
 
 
 def _now_str() -> str:
@@ -372,31 +379,62 @@ def _derive_trend(ind: dict, price: float) -> str:
     return "neutral"
 
 
+def _cycle_lock(symbol: str) -> threading.Lock:
+    with _cycle_locks_lock:
+        return _cycle_locks.setdefault(symbol, threading.Lock())
+
+
 def _worker() -> None:
     _add_log("İzleme motoru başlatıldı.")
-    while not _stop_event.is_set():
+    while not _worker_stop_event.is_set():
         syms = tracked_symbols()
         if not syms:
-            _stop_event.wait(timeout=5)
+            _worker_stop_event.wait(timeout=5)
             continue
         started = time.time()
         for symbol in syms:
-            if _stop_event.is_set():
+            if _worker_stop_event.is_set():
                 break
-            _cycle(symbol)
+            if not _cycle_lock(symbol).acquire(blocking=False):
+                _add_log(f"{symbol}: önceki çevrim hâlâ sürüyor, bu tur atlandı.")
+                continue
+            try:
+                _cycle(symbol)
+            finally:
+                _cycle_lock(symbol).release()
+        with _last_activity_lock:
+            _last_activity = time.time()
         elapsed = time.time() - started
         wait = max(5, DEFAULT_INTERVAL - elapsed)
-        _stop_event.wait(timeout=wait)
+        _worker_stop_event.wait(timeout=wait)
     _add_log("İzleme motoru durduruldu.")
 
 
 def _ensure_worker() -> None:
-    global _worker_thread
+    global _worker_thread, _worker_stop_event
+    now = time.time()
+    with _last_activity_lock:
+        idle = now - _last_activity
     if _worker_thread and _worker_thread.is_alive():
-        return
-    _stop_event.clear()
+        if idle > 300:
+            _add_log(f"İzleme motoru {idle:.0f} sn'dir sessiz — yeniden başlatılıyor.")
+            if _worker_stop_event:
+                _worker_stop_event.set()
+        else:
+            return
+    _worker_stop_event = threading.Event()
     _worker_thread = threading.Thread(target=_worker, daemon=True)
     _worker_thread.start()
+
+
+def worker_status() -> dict:
+    with _last_activity_lock:
+        idle = round(time.time() - _last_activity, 1)
+    return {
+        "alive": bool(_worker_thread and _worker_thread.is_alive()),
+        "idle_seconds": idle,
+        "tracked": tracked_symbols(),
+    }
 
 
 def init() -> None:

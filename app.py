@@ -31,6 +31,16 @@ def stock_page(symbol):
     return render_template("stock.html", symbol=clean)
 
 
+@app.route("/healthz")
+def healthz():
+    return jsonify({
+        "ok": True,
+        "time": time.time(),
+        "worker": tracker.worker_status(),
+        "telegram": tracker.telegram_status(),
+    })
+
+
 @app.route("/api/search")
 def api_search():
     q = request.args.get("q", "")
@@ -59,8 +69,20 @@ def api_stock(symbol):
     if not snapshot:
         try:
             snapshot = tracker.collect_snapshot(clean)
+            if snapshot:
+                tracker.set_snapshot_now(clean, snapshot)
         except Exception:
             snapshot = None
+    else:
+        ts = snapshot.get("timestamp")
+        if market_is_open() and ts and time.time() - ts > 120:
+            try:
+                fresh = tracker.collect_snapshot(clean)
+                if fresh:
+                    tracker.set_snapshot_now(clean, fresh)
+                    snapshot = fresh
+            except Exception:
+                pass
     if not snapshot:
         quote = get_quote(clean)
         if quote:
