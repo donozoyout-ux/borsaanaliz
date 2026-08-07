@@ -91,17 +91,10 @@ a{color:var(--mut);text-decoration:none}
 #chartEl .empty{height:100%;display:flex;align-items:center;justify-content:center}
 .chart-cdnerr{font-size:12px;color:var(--warn);padding:8px 0}
 .stale-banner{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);color:var(--warn);border-radius:10px;padding:10px 14px;font-size:13px;line-height:1.6;margin-bottom:14px}
-.pos-form{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px}
-@media(max-width:700px){.pos-form{grid-template-columns:1fr 1fr}}
-.pos-form input{background:#0d1220;border:1px solid var(--line);color:var(--txt);font-size:13px;padding:9px 10px;border-radius:8px;outline:none;min-width:0}
-.pos-form input:focus{border-color:var(--acc)}
-.pos-form .btn{padding:9px 12px}
-.pos-result{font-size:14px;line-height:1.7}
-.pos-result .big{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
-.pos-result .row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed rgba(255,255,255,.05)}
-.pos-result .row:last-child{border-bottom:none}
 .strat-reason{font-size:13px;color:var(--mut);padding:4px 0;display:flex;gap:8px}
 .strat-reason .ico{flex:none}
+.strat-rows .row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed rgba(255,255,255,.05);font-size:14px}
+.strat-rows .row:last-child{border-bottom:none}
 </style>
 <script src="{{ url_for('static', filename='js/lightweight-charts.js') }}"></script>
 </head>
@@ -140,19 +133,6 @@ a{color:var(--mut);text-decoration:none}
   <div class="panel">
     <h3>🎮 Strateji Önerisi <span class="badge neutral" id="strategyBadge">hesaplanıyor</span></h3>
     <div id="strategy"><div class="empty">Yükleniyor...</div></div>
-  </div>
-
-  <div class="panel">
-    <h3>💼 Pozisyon Takibi (Midas) <span class="badge neutral" id="posBadge">yok</span></h3>
-    <div class="pos-form" id="posForm">
-      <input type="number" id="posBuy" placeholder="Alış fiyatı (TL)" step="0.01" min="0">
-      <input type="number" id="posQty" placeholder="Adet" step="1" min="1">
-      <input type="number" id="posStop" placeholder="Stop (ops.)" step="0.01" min="0">
-      <input type="number" id="posTarget" placeholder="Hedef (ops.)" step="0.01" min="0">
-      <button class="btn" id="posSave">Kaydet</button>
-      <button class="btn danger" id="posDelete">Sil</button>
-    </div>
-    <div id="position"><div class="empty">Midas'tan aldığın pozisyonu gir; kâr/zarar ve TUT/SAT önerisi burada.</div></div>
   </div>
 
   <div class="panel">
@@ -427,7 +407,6 @@ function render(data) {
   renderTelegram(data);
   renderForecast(data);
   renderStrategy(data);
-  renderPosition(data);
   renderFund(data);
   renderNews(data);
   renderDbStats(data);
@@ -447,10 +426,10 @@ function renderStrategy(data) {
     return;
   }
   const act = st.action;
-  const cls = act === 'AL' ? 'up' : (act === 'SAT' ? 'down' : (act === 'TUT' ? 'acc' : 'neutral'));
-  const label = {AL:'🟢 ALIM', SAT:'🔴 SATIŞ', TUT:'🔵 TUT', BEKLE:'⚪ BEKLE'}[act] || act;
+  const cls = act === 'AL' ? 'up' : 'neutral';
+  const label = {AL:'🟢 ALIM', BEKLE:'⚪ BEKLE'}[act] || act;
   badge.textContent = label;
-  badge.className = 'badge ' + (act === 'TUT' ? 'up' : cls);
+  badge.className = 'badge ' + cls;
 
   const reasons = (st.reasons || []).map(r =>
     `<div class="strat-reason"><span class="ico">▸</span><span>${r}</span></div>`
@@ -461,66 +440,18 @@ function renderStrategy(data) {
     ['Hedef (Tavan)', st.target != null ? fmt(st.target) + ' TL' : '—'],
     ['Stop', st.stop != null ? fmt(st.stop) + ' TL' : '—'],
     ['Risk / Kazanç', st.rr != null ? '1 : ' + fmt(st.rr) : '—'],
-    ['Önerilen Adet', st.suggested_qty != null ? st.suggested_qty + ' adet' : '—'],
   ].map(r => `<div class="row"><span>${r[0]}</span><span>${r[1]}</span></div>`).join('');
 
   el.innerHTML = `
-    <div class="pos-result" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div class="strat-wrap" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div>
         <div class="fc-summary" style="margin-bottom:8px">${reasons || '<span style="color:#5a5f6b">Kural dışı — gerekçe yok.</span>'}</div>
       </div>
       <div>
         <h4 style="font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Seviyeler</h4>
-        ${rows}
+        <div class="strat-rows">${rows}</div>
       </div>
     </div>`;
-}
-
-function renderPosition(data) {
-  const pos = (data.snapshot && data.snapshot.position);
-  const el = document.getElementById('position');
-  const badge = document.getElementById('posBadge');
-  const form = document.getElementById('posForm');
-  if (!pos) {
-    badge.textContent = 'yok'; badge.className = 'badge neutral';
-    el.innerHTML = '<div class="empty">Midas\'tan aldığın pozisyonu gir; kâr/zarar ve TUT/SAT önerisi burada.</div>';
-    return;
-  }
-  badge.textContent = pos.symbol; badge.className = 'badge up';
-
-  const q = (data.snapshot && data.snapshot.quote) || {};
-  const cur = q.price;
-  const buy = pos.buy_price;
-  const pnl = cur != null ? (cur - buy) * pos.quantity : null;
-  const pnlPct = cur != null ? (cur - buy) / buy * 100 : null;
-  const cls = pnl == null ? '' : (pnl >= 0 ? 'up' : 'down');
-
-  let advice = '';
-  const st = (data.snapshot && data.snapshot.strategy) || {};
-  if (st.action === 'SAT') {
-    advice = '<span class="badge down">SAT / ÇIK</span>';
-  } else if (st.action === 'TUT') {
-    advice = '<span class="badge up">TUT</span>';
-  } else if (st.action === 'AL') {
-    advice = '<span class="badge up">AL / EKLE</span>';
-  } else {
-    advice = '<span class="badge neutral">BEKLE</span>';
-  }
-
-  el.innerHTML = `
-    <div class="pos-result">
-      <div class="row"><span>Alış</span><span>${fmt(buy)} TL × ${pos.quantity} adet</span></div>
-      <div class="row"><span>Güncel Fiyat</span><span>${cur != null ? fmt(cur) + ' TL' : '—'}</span></div>
-      <div class="row"><span>Kâr / Zarar</span><span class="${cls} big">${pnl != null ? (pnl > 0 ? '+' : '') + fmt(pnl) + ' TL' : '—'}</span></div>
-      <div class="row"><span>Değişim</span><span class="${cls}">${pnlPct != null ? (pnlPct > 0 ? '+' : '') + fmt(pnlPct) + ' %' : '—'}</span></div>
-      <div class="row"><span>Stop / Hedef</span><span>${pos.stop ? fmt(pos.stop) : '—'} / ${pos.target ? fmt(pos.target) : '—'}</span></div>
-      <div class="row"><span>Strateji Kararı</span><span>${advice}</span></div>
-    </div>`;
-
-  document.getElementById('posBuy').value = pos.buy_price;
-  document.getElementById('posQty').value = pos.quantity;
-  document.getElementById('posStop').value = pos.stop || '';
-  document.getElementById('posTarget').value = pos.target || '';
 }
 
 function renderForecast(data) {
@@ -750,39 +681,6 @@ document.getElementById('tgTest').onclick = async () => {
     alert(r.message || r.error || 'Gönderildi');
   } catch(e) { alert('Hata: ' + e.message); }
   btn.disabled = false; btn.textContent = 'Test Mesajı Gönder';
-};
-
-document.getElementById('posSave').onclick = async () => {
-  const buy = parseFloat(document.getElementById('posBuy').value);
-  const qty = parseFloat(document.getElementById('posQty').value);
-  if (!buy || !qty || buy <= 0 || qty <= 0) {
-    alert('Alış fiyatı ve adet girmelisin.');
-    return;
-  }
-  const stop = parseFloat(document.getElementById('posStop').value);
-  const target = parseFloat(document.getElementById('posTarget').value);
-  try {
-    const r = await j('/api/position/' + SYMBOL, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        buy_price: buy,
-        quantity: qty,
-        stop: isNaN(stop) ? null : stop,
-        target: isNaN(target) ? null : target,
-      }),
-    });
-    if (!r.ok) { alert(r.error || 'Kayıt hatası'); return; }
-    refresh();
-  } catch(e) { alert('Hata: ' + e.message); }
-};
-
-document.getElementById('posDelete').onclick = async () => {
-  if (!confirm('Pozisyon kaydı silinsin mi?')) return;
-  try {
-    await j('/api/position/' + SYMBOL, {method:'DELETE'});
-    refresh();
-  } catch(e) { alert('Hata: ' + e.message); }
 };
 
 start();

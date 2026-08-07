@@ -212,9 +212,6 @@ def collect_snapshot(symbol: str) -> dict | None:
     snapshot["news"] = news_items
     snapshot["forecast"] = forecast
     snapshot["strategy"] = build_strategy(clean, quote, ind, forecast)
-    position = db.get_position(clean)
-    if position:
-        snapshot["position"] = position
     return snapshot
 
 
@@ -255,16 +252,13 @@ def _cycle(symbol: str) -> None:
         fundamentals = get_fundamentals(symbol)
         news_items = get_news(symbol)
         forecast = build_forecast(symbol, quote, ind, history, fundamentals)
-        position = db.get_position(symbol)
 
         snapshot = build_snapshot(symbol, quote, ind, intraday, trend=_derive_trend(ind, quote["price"]))
         snapshot["market_label"] = market_label()
         snapshot["fundamentals"] = fundamentals
         snapshot["news"] = news_items
         snapshot["forecast"] = forecast
-        snapshot["strategy"] = build_strategy(symbol, quote, ind, forecast, position)
-        if position:
-            snapshot["position"] = position
+        snapshot["strategy"] = build_strategy(symbol, quote, ind, forecast)
         _set_snapshot(symbol, snapshot)
         db.store_snapshot(symbol, snapshot)
 

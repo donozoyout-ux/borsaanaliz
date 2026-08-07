@@ -2,9 +2,7 @@ import email.utils
 import threading
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
-from typing import Optional
-from urllib.parse import quote
+from urllib.parse import urlencode
 
 import requests
 
@@ -39,9 +37,8 @@ _GOOGLE_ATOM = "http://www.w3.org/2005/Atom"
 def _clean_title(title: str) -> str:
     t = title.strip()
     for sep in [" - ", " | ", " – "]:
-        parts = t.split(sep)
-        if len(parts) > 1:
-            t = parts[-1].strip()
+        if sep in t:
+            t = t.split(sep)[0].strip()
             break
     return t
 
@@ -53,7 +50,8 @@ def _is_important(title: str) -> bool:
 
 def _google_news(symbol: str, limit: int = 5) -> list[dict]:
     q = f"{symbol} borsa"
-    url = "https://news.google.com/rss/search?" + quote(q) + "&hl=tr&gl=TR&ceid=TR:tr"
+    params = {"q": q, "hl": "tr", "gl": "TR", "ceid": "TR:tr"}
+    url = "https://news.google.com/rss/search?" + urlencode(params)
     try:
         resp = _session.get(url, timeout=12)
         if resp.status_code != 200 or "<?xml" not in resp.text[:200]:
@@ -86,7 +84,7 @@ def _google_news(symbol: str, limit: int = 5) -> list[dict]:
 
 def _bing_news(symbol: str, limit: int = 5) -> list[dict]:
     url = "https://www.bing.com/news/search"
-    params = {"q": f"{symbol} borsa hisse", "format": "rss", "setlang": "tr"}
+    params = {"q": f"{symbol} hisse", "format": "rss", "setlang": "tr"}
     try:
         resp = _session.get(url, params=params, timeout=15)
         if resp.status_code != 200:
